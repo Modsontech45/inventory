@@ -1,0 +1,984 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ─── Common sync columns are embedded in each model ──────────────────────────
+// id           UUID v7, device-generated
+// businessId   tenant isolation
+// depotId      depot the record belongs to (nullable for business-level records)
+// createdAt    device clock
+// updatedAt    device clock (for master data: last-write-wins)
+// createdBy    user id
+// deviceId     which device created the record
+// deleted      soft delete
+// serverSeq    assigned by server on insert (sequence)
+// serverReceivedAt  server wall clock on insert
+
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  OWNER
+  MANAGER
+  CASHIER
+  STOREKEEPER
+  DELIVERY
+  CUSTOM
+}
+
+enum StockMovementType {
+  PURCHASE_RECEPTION
+  SALE_EXIT
+  CUSTOMER_RETURN
+  TRANSFER_IN
+  TRANSFER_OUT
+  ADJUSTMENT_PLUS
+  ADJUSTMENT_MINUS
+  LOSS_BREAKAGE
+  INTERNAL_USE
+  INVENTORY_ADJUSTMENT
+  DELIVERY_EXIT
+}
+
+enum PaymentMethod {
+  CASH
+  FLOOZ
+  MIXX
+  BANK_TRANSFER
+  CHEQUE
+  CREDIT
+}
+
+enum SaleStatus {
+  ACTIVE
+  CANCELLED
+  ON_HOLD
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  PROBLEM
+}
+
+enum TransferStatus {
+  PENDING
+  IN_TRANSIT
+  RECEIVED
+  CANCELLED
+}
+
+enum PurchaseOrderStatus {
+  DRAFT
+  SENT
+  PARTIAL
+  RECEIVED
+  CANCELLED
+}
+
+enum DocumentType {
+  SALE
+  INVOICE
+  QUOTE
+  DELIVERY_NOTE
+  PURCHASE_ORDER
+}
+
+enum AlertType {
+  LOW_STOCK
+  NEGATIVE_STOCK
+  SYNC_PROBLEM
+  OVERDUE_DEBT
+}
+
+enum OutboxStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+// ─── Business & structure ────────────────────────────────────────────────────
+
+model Business {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String
+  logoUrl   String?
+  address   String?
+  phone     String?
+  nif       String?
+  rccm      String?
+  taxEnabled Boolean @default(false)
+  taxRate    Int     @default(18)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  depots      Depot[]
+  users       User[]
+  categories  Category[]
+  products    Product[]
+  customers   Customer[]
+  suppliers   Supplier[]
+  sales       Sale[]
+  quotes      Quote[]
+  transfers   Transfer[]
+  inventories InventoryCount[]
+  expenses    Expense[]
+  auditLogs   AuditLog[]
+  pairingCodes PairingCode[]
+  whatsappOutbox WhatsAppOutbox[]
+  emailOutbox    EmailOutbox[]
+  alerts         Alert[]
+  settings       BusinessSettings?
+  cashSessions   CashSession[]
+
+  @@map("businesses")
+}
+
+model BusinessSettings {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @unique @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+
+  defaultLanguage    String  @default("fr")
+  currency           String  @default("XOF")
+  timezone           String  @default("Africa/Lome")
+  whatsappNumber     String?
+  dailySummaryTime   String  @default("20:00")
+  dailySummaryLang   String  @default("fr")
+  monthlySummaryEnabled Boolean @default(true)
+  monthlySummaryEmails String[] @default([])
+  monthlySummaryFormat String  @default("excel")
+  monthlySummaryDay   Int     @default(1)
+  monthlySummaryTime  String  @default("07:00")
+  monthlySummaryLang  String  @default("fr")
+  deliveryFeeThreshold Int    @default(0)
+  appVersion          String  @default("1.0.0")
+  minSupportedVersion String  @default("1.0.0")
+  updatedAt           DateTime @updatedAt
+
+  @@map("business_settings")
+}
+
+model Depot {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  name       String
+  address    String?
+  phone      String?
+  isDefault  Boolean  @default(false)
+  deleted    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  devices      Device[]
+  users        User[]
+  stockLevels  ProductStockLevel[]
+  stockMovements StockMovement[]
+  sales        Sale[]
+  cashSessions CashSession[]
+  expenses     Expense[]
+  inventories  InventoryCount[]
+  transfersOut Transfer[] @relation("TransferFrom")
+  transfersIn  Transfer[] @relation("TransferTo")
+
+  @@map("depots")
+}
+
+model Device {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  depotId    String   @db.Uuid
+  depot      Depot    @relation(fields: [depotId], references: [id])
+  name       String
+  platform   String
+  appVersion String?
+  revoked    Boolean  @default(false)
+  lastSeenAt DateTime?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  serverSeq        BigInt?  @default(0)
+  serverReceivedAt DateTime?
+
+  sales          Sale[]
+  stockMovements StockMovement[]
+  cashSessions   CashSession[]
+  expenses       Expense[]
+  auditLogs      AuditLog[]
+
+  @@map("devices")
+}
+
+model PairingCode {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  depotId    String   @db.Uuid
+  code       String   @unique
+  expiresAt  DateTime
+  used       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+
+  @@map("pairing_codes")
+}
+
+// ─── Users ───────────────────────────────────────────────────────────────────
+
+model User {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  depotId    String?  @db.Uuid
+  depot      Depot?   @relation(fields: [depotId], references: [id])
+  name       String
+  phone      String?
+  role       UserRole @default(CASHIER)
+  pinHash    String?
+  photoUrl   String?
+  active     Boolean  @default(true)
+  deleted    Boolean  @default(false)
+  permissions Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?  @db.Uuid
+  deviceId   String?  @db.Uuid
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  sales              Sale[]
+  stockMovements     StockMovement[]
+  cashSessions       CashSession[]
+  expenses           Expense[]
+  auditLogsCreated   AuditLog[]
+  inventories        InventoryCount[]
+  refreshTokens      RefreshToken[]
+  customerPayments   CustomerPayment[]
+  supplierPayments   SupplierPayment[]
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  user      User     @relation(fields: [userId], references: [id])
+  deviceId  String   @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("refresh_tokens")
+}
+
+// ─── Catalogue ───────────────────────────────────────────────────────────────
+
+model Category {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  name       String
+  deleted    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  products Product[]
+
+  @@map("categories")
+}
+
+model Product {
+  id           String   @id @db.Uuid
+  businessId   String   @db.Uuid
+  business     Business @relation(fields: [businessId], references: [id])
+  categoryId   String?  @db.Uuid
+  category     Category? @relation(fields: [categoryId], references: [id])
+  name         String
+  brand        String?
+  description  String?
+  photoUrl     String?
+  barcode      String?
+  internalCode String?
+  archived     Boolean  @default(false)
+  deleted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  createdBy    String?  @db.Uuid
+  deviceId     String?  @db.Uuid
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  units          ProductUnit[]
+  stockLevels    ProductStockLevel[]
+  stockMovements StockMovement[]
+  saleLines      SaleLine[]
+  quoteLines     QuoteLine[]
+  transferLines  TransferLine[]
+  inventoryLines InventoryLine[]
+  priceHistory   PriceHistory[]
+
+  @@map("products")
+}
+
+model ProductUnit {
+  id            String  @id @db.Uuid
+  businessId    String  @db.Uuid
+  productId     String  @db.Uuid
+  product       Product @relation(fields: [productId], references: [id])
+  name          String
+  isBase        Boolean @default(false)
+  factor        Int     @default(1)
+  purchasePrice Int     @default(0)
+  retailPrice   Int     @default(0)
+  wholesalePrice Int    @default(0)
+  wholesaleMinQty Int   @default(1)
+  deleted       Boolean @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  serverSeq             BigInt?  @default(0)
+  serverReceivedAt      DateTime?
+
+  saleLines    SaleLine[]
+  quoteLines   QuoteLine[]
+  transferLines TransferLine[]
+  inventoryLines InventoryLine[]
+
+  @@map("product_units")
+}
+
+model ProductStockLevel {
+  id         String  @id @db.Uuid
+  businessId String  @db.Uuid
+  productId  String  @db.Uuid
+  product    Product @relation(fields: [productId], references: [id])
+  depotId    String  @db.Uuid
+  depot      Depot   @relation(fields: [depotId], references: [id])
+  minLevel   Int     @default(0)
+  cachedQty  Int     @default(0)
+  updatedAt  DateTime @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@unique([productId, depotId])
+  @@map("product_stock_levels")
+}
+
+model PriceHistory {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  productId  String   @db.Uuid
+  product    Product  @relation(fields: [productId], references: [id])
+  unitId     String   @db.Uuid
+  field      String
+  oldValue   Int
+  newValue   Int
+  changedBy  String   @db.Uuid
+  deviceId   String?  @db.Uuid
+  createdAt  DateTime @default(now())
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("price_history")
+}
+
+// ─── Customers ───────────────────────────────────────────────────────────────
+
+enum CustomerType {
+  INDIVIDUAL
+  CONTRACTOR
+  COMPANY
+}
+
+model Customer {
+  id          String       @id @db.Uuid
+  businessId  String       @db.Uuid
+  business    Business     @relation(fields: [businessId], references: [id])
+  name        String
+  phone       String?
+  type        CustomerType @default(INDIVIDUAL)
+  address     String?
+  notes       String?
+  creditLimit Int?
+  deleted     Boolean      @default(false)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  createdBy   String?      @db.Uuid
+  deviceId    String?      @db.Uuid
+  serverSeq           BigInt?  @default(0)
+  serverReceivedAt    DateTime?
+
+  sales           Sale[]
+  payments        CustomerPayment[]
+  quotes          Quote[]
+
+  @@map("customers")
+}
+
+model CustomerPayment {
+  id          String        @id @db.Uuid
+  businessId  String        @db.Uuid
+  depotId     String        @db.Uuid
+  customerId  String        @db.Uuid
+  customer    Customer      @relation(fields: [customerId], references: [id])
+  userId      String        @db.Uuid
+  user        User          @relation(fields: [userId], references: [id])
+  deviceId    String        @db.Uuid
+  amount      Int
+  method      PaymentMethod @default(CASH)
+  reference   String?
+  notes       String?
+  dueDate     DateTime?
+  deleted     Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  serverSeq           BigInt?  @default(0)
+  serverReceivedAt    DateTime?
+
+  @@map("customer_payments")
+}
+
+// ─── Suppliers ───────────────────────────────────────────────────────────────
+
+model Supplier {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  name       String
+  phone      String?
+  address    String?
+  notes      String?
+  deleted    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  createdBy  String?  @db.Uuid
+  deviceId   String?  @db.Uuid
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  purchaseOrders PurchaseOrder[]
+  payments       SupplierPayment[]
+
+  @@map("suppliers")
+}
+
+model PurchaseOrder {
+  id         String              @id @db.Uuid
+  businessId String              @db.Uuid
+  depotId    String              @db.Uuid
+  supplierId String              @db.Uuid
+  supplier   Supplier            @relation(fields: [supplierId], references: [id])
+  status     PurchaseOrderStatus @default(DRAFT)
+  number     String
+  notes      String?
+  deleted    Boolean             @default(false)
+  createdAt  DateTime            @default(now())
+  updatedAt  DateTime            @updatedAt
+  createdBy  String?             @db.Uuid
+  deviceId   String?             @db.Uuid
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  receptions Reception[]
+  payments   SupplierPayment[]
+
+  @@map("purchase_orders")
+}
+
+model Reception {
+  id              String        @id @db.Uuid
+  businessId      String        @db.Uuid
+  depotId         String        @db.Uuid
+  purchaseOrderId String?       @db.Uuid
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  supplierId      String        @db.Uuid
+  notes           String?
+  deleted         Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  createdBy       String?       @db.Uuid
+  deviceId        String?       @db.Uuid
+  serverSeq               BigInt?  @default(0)
+  serverReceivedAt        DateTime?
+
+  stockMovements StockMovement[]
+
+  @@map("receptions")
+}
+
+model SupplierPayment {
+  id              String        @id @db.Uuid
+  businessId      String        @db.Uuid
+  depotId         String        @db.Uuid
+  supplierId      String        @db.Uuid
+  supplier        Supplier      @relation(fields: [supplierId], references: [id])
+  purchaseOrderId String?       @db.Uuid
+  purchaseOrder   PurchaseOrder? @relation(fields: [purchaseOrderId], references: [id])
+  userId          String        @db.Uuid
+  user            User          @relation(fields: [userId], references: [id])
+  deviceId        String        @db.Uuid
+  amount          Int
+  method          PaymentMethod @default(CASH)
+  reference       String?
+  notes           String?
+  deleted         Boolean       @default(false)
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  serverSeq               BigInt?  @default(0)
+  serverReceivedAt        DateTime?
+
+  @@map("supplier_payments")
+}
+
+// ─── Sales ───────────────────────────────────────────────────────────────────
+
+model Sale {
+  id           String     @id @db.Uuid
+  businessId   String     @db.Uuid
+  business     Business   @relation(fields: [businessId], references: [id])
+  depotId      String     @db.Uuid
+  depot        Depot      @relation(fields: [depotId], references: [id])
+  customerId   String?    @db.Uuid
+  customer     Customer?  @relation(fields: [customerId], references: [id])
+  userId       String     @db.Uuid
+  user         User       @relation(fields: [userId], references: [id])
+  deviceId     String     @db.Uuid
+  device       Device     @relation(fields: [deviceId], references: [id])
+  number       String
+  status       SaleStatus @default(ACTIVE)
+  totalAmount  Int        @default(0)
+  discountAmount Int      @default(0)
+  taxAmount    Int        @default(0)
+  notes        String?
+  cancelReason String?
+  cancelledBy  String?    @db.Uuid
+  cashSessionId String?   @db.Uuid
+  deleted      Boolean    @default(false)
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  lines      SaleLine[]
+  payments   SalePayment[]
+  deliveries Delivery[]
+
+  @@map("sales")
+}
+
+model SaleLine {
+  id         String      @id @db.Uuid
+  businessId String      @db.Uuid
+  saleId     String      @db.Uuid
+  sale       Sale        @relation(fields: [saleId], references: [id])
+  productId  String      @db.Uuid
+  product    Product     @relation(fields: [productId], references: [id])
+  unitId     String      @db.Uuid
+  unit       ProductUnit @relation(fields: [unitId], references: [id])
+  qty        Int
+  unitPrice  Int
+  discount   Int         @default(0)
+  lineTotal  Int
+  deleted    Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("sale_lines")
+}
+
+model SalePayment {
+  id         String        @id @db.Uuid
+  businessId String        @db.Uuid
+  depotId    String        @db.Uuid
+  saleId     String        @db.Uuid
+  sale       Sale          @relation(fields: [saleId], references: [id])
+  deviceId   String        @db.Uuid
+  method     PaymentMethod
+  amount     Int
+  reference  String?
+  deleted    Boolean       @default(false)
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("sale_payments")
+}
+
+// ─── Quotes ──────────────────────────────────────────────────────────────────
+
+model Quote {
+  id           String    @id @db.Uuid
+  businessId   String    @db.Uuid
+  business     Business  @relation(fields: [businessId], references: [id])
+  depotId      String    @db.Uuid
+  customerId   String?   @db.Uuid
+  customer     Customer? @relation(fields: [customerId], references: [id])
+  number       String
+  validUntil   DateTime?
+  totalAmount  Int       @default(0)
+  status       String    @default("DRAFT")
+  convertedToSaleId String? @db.Uuid
+  notes        String?
+  deleted      Boolean   @default(false)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  createdBy    String?   @db.Uuid
+  deviceId     String?   @db.Uuid
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  lines QuoteLine[]
+
+  @@map("quotes")
+}
+
+model QuoteLine {
+  id         String      @id @db.Uuid
+  businessId String      @db.Uuid
+  quoteId    String      @db.Uuid
+  quote      Quote       @relation(fields: [quoteId], references: [id])
+  productId  String      @db.Uuid
+  product    Product     @relation(fields: [productId], references: [id])
+  unitId     String      @db.Uuid
+  unit       ProductUnit @relation(fields: [unitId], references: [id])
+  qty        Int
+  unitPrice  Int
+  discount   Int         @default(0)
+  lineTotal  Int
+  deleted    Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("quote_lines")
+}
+
+// ─── Stock ───────────────────────────────────────────────────────────────────
+
+model StockMovement {
+  id           String            @id @db.Uuid
+  businessId   String            @db.Uuid
+  depotId      String            @db.Uuid
+  depot        Depot             @relation(fields: [depotId], references: [id])
+  productId    String            @db.Uuid
+  product      Product           @relation(fields: [productId], references: [id])
+  userId       String            @db.Uuid
+  user         User              @relation(fields: [userId], references: [id])
+  deviceId     String            @db.Uuid
+  device       Device            @relation(fields: [deviceId], references: [id])
+  type         StockMovementType
+  qtyInBase    Int
+  reason       String?
+  refDocId     String?           @db.Uuid
+  refDocType   DocumentType?
+  receptionId  String?           @db.Uuid
+  reception    Reception?        @relation(fields: [receptionId], references: [id])
+  unitCost     Int?
+  deleted      Boolean           @default(false)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  @@map("stock_movements")
+}
+
+// ─── Deliveries ──────────────────────────────────────────────────────────────
+
+model Delivery {
+  id           String         @id @db.Uuid
+  businessId   String         @db.Uuid
+  depotId      String         @db.Uuid
+  saleId       String         @db.Uuid
+  sale         Sale           @relation(fields: [saleId], references: [id])
+  driverId     String?        @db.Uuid
+  number       String
+  status       DeliveryStatus @default(PENDING)
+  address      String?
+  contactPhone String?
+  scheduledAt  DateTime?
+  deliveredAt  DateTime?
+  deliveryFee  Int            @default(0)
+  vehicle      String?
+  notes        String?
+  photoUrl     String?
+  deleted      Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  createdBy    String?        @db.Uuid
+  deviceId     String?        @db.Uuid
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  lines DeliveryLine[]
+
+  @@map("deliveries")
+}
+
+model DeliveryLine {
+  id           String   @id @db.Uuid
+  businessId   String   @db.Uuid
+  deliveryId   String   @db.Uuid
+  delivery     Delivery @relation(fields: [deliveryId], references: [id])
+  saleLineId   String?  @db.Uuid
+  productId    String   @db.Uuid
+  unitId       String   @db.Uuid
+  qtyOrdered   Int
+  qtyDelivered Int      @default(0)
+  deleted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  @@map("delivery_lines")
+}
+
+// ─── Transfers ───────────────────────────────────────────────────────────────
+
+model Transfer {
+  id           String         @id @db.Uuid
+  businessId   String         @db.Uuid
+  fromDepotId  String         @db.Uuid
+  fromDepot    Depot          @relation("TransferFrom", fields: [fromDepotId], references: [id])
+  toDepotId    String         @db.Uuid
+  toDepot      Depot          @relation("TransferTo", fields: [toDepotId], references: [id])
+  business     Business       @relation(fields: [businessId], references: [id])
+  number       String
+  status       TransferStatus @default(PENDING)
+  notes        String?
+  deleted      Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  createdBy    String?        @db.Uuid
+  deviceId     String?        @db.Uuid
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  lines TransferLine[]
+
+  @@map("transfers")
+}
+
+model TransferLine {
+  id         String      @id @db.Uuid
+  businessId String      @db.Uuid
+  transferId String      @db.Uuid
+  transfer   Transfer    @relation(fields: [transferId], references: [id])
+  productId  String      @db.Uuid
+  product    Product     @relation(fields: [productId], references: [id])
+  unitId     String      @db.Uuid
+  unit       ProductUnit @relation(fields: [unitId], references: [id])
+  qty        Int
+  qtyReceived Int        @default(0)
+  deleted    Boolean     @default(false)
+  createdAt  DateTime    @default(now())
+  updatedAt  DateTime    @updatedAt
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("transfer_lines")
+}
+
+// ─── Inventory counts ─────────────────────────────────────────────────────────
+
+model InventoryCount {
+  id          String   @id @db.Uuid
+  businessId  String   @db.Uuid
+  business    Business @relation(fields: [businessId], references: [id])
+  depotId     String   @db.Uuid
+  depot       Depot    @relation(fields: [depotId], references: [id])
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
+  status      String   @default("IN_PROGRESS")
+  notes       String?
+  validatedBy String?  @db.Uuid
+  validatedAt DateTime?
+  deleted     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  deviceId    String?  @db.Uuid
+  serverSeq           BigInt?  @default(0)
+  serverReceivedAt    DateTime?
+
+  lines InventoryLine[]
+
+  @@map("inventory_counts")
+}
+
+model InventoryLine {
+  id              String         @id @db.Uuid
+  businessId      String         @db.Uuid
+  inventoryCountId String        @db.Uuid
+  inventoryCount  InventoryCount @relation(fields: [inventoryCountId], references: [id])
+  productId       String         @db.Uuid
+  product         Product        @relation(fields: [productId], references: [id])
+  unitId          String         @db.Uuid
+  unit            ProductUnit    @relation(fields: [unitId], references: [id])
+  expectedQty     Int
+  countedQty      Int
+  diffQty         Int
+  deleted         Boolean        @default(false)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  serverSeq               BigInt?  @default(0)
+  serverReceivedAt        DateTime?
+
+  @@map("inventory_lines")
+}
+
+// ─── Cash sessions & expenses ────────────────────────────────────────────────
+
+model CashSession {
+  id           String   @id @db.Uuid
+  businessId   String   @db.Uuid
+  business     Business @relation(fields: [businessId], references: [id])
+  depotId      String   @db.Uuid
+  depot        Depot    @relation(fields: [depotId], references: [id])
+  userId       String   @db.Uuid
+  user         User     @relation(fields: [userId], references: [id])
+  deviceId     String   @db.Uuid
+  device       Device   @relation(fields: [deviceId], references: [id])
+  openedAt     DateTime
+  closedAt     DateTime?
+  openingCash  Int      @default(0)
+  expectedCash Int?
+  countedCash  Int?
+  expectedFlooz Int?
+  countedFlooz Int?
+  expectedMixx Int?
+  countedMixx  Int?
+  expectedBank Int?
+  countedBank  Int?
+  notes        String?
+  deleted      Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  serverSeq            BigInt?  @default(0)
+  serverReceivedAt     DateTime?
+
+  @@map("cash_sessions")
+}
+
+model Expense {
+  id          String   @id @db.Uuid
+  businessId  String   @db.Uuid
+  business    Business @relation(fields: [businessId], references: [id])
+  depotId     String   @db.Uuid
+  depot       Depot    @relation(fields: [depotId], references: [id])
+  userId      String   @db.Uuid
+  user        User     @relation(fields: [userId], references: [id])
+  deviceId    String   @db.Uuid
+  device      Device   @relation(fields: [deviceId], references: [id])
+  category    String
+  amount      Int
+  description String?
+  photoUrl    String?
+  deleted     Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  serverSeq           BigInt?  @default(0)
+  serverReceivedAt    DateTime?
+
+  @@map("expenses")
+}
+
+// ─── Audit & system ──────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  userId     String   @db.Uuid
+  user       User     @relation(fields: [userId], references: [id])
+  deviceId   String?  @db.Uuid
+  device     Device?  @relation(fields: [deviceId], references: [id])
+  table      String
+  recordId   String
+  action     String
+  oldValues  Json?
+  newValues  Json?
+  createdAt  DateTime @default(now())
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("audit_log")
+}
+
+model Alert {
+  id         String    @id @db.Uuid
+  businessId String    @db.Uuid
+  business   Business  @relation(fields: [businessId], references: [id])
+  depotId    String?   @db.Uuid
+  type       AlertType
+  payload    Json
+  resolved   Boolean   @default(false)
+  resolvedAt DateTime?
+  createdAt  DateTime  @default(now())
+  serverSeq          BigInt?  @default(0)
+  serverReceivedAt   DateTime?
+
+  @@map("alerts")
+}
+
+model WhatsAppOutbox {
+  id           String       @id @default(uuid()) @db.Uuid
+  businessId   String       @db.Uuid
+  business     Business     @relation(fields: [businessId], references: [id])
+  recipient    String
+  templateName String
+  language     String       @default("fr")
+  parameters   Json?
+  status       OutboxStatus @default(PENDING)
+  attempts     Int          @default(0)
+  lastAttemptAt DateTime?
+  sentAt       DateTime?
+  errorMessage String?
+  messageId    String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@map("whatsapp_outbox")
+}
+
+model EmailOutbox {
+  id           String       @id @default(uuid()) @db.Uuid
+  businessId   String       @db.Uuid
+  business     Business     @relation(fields: [businessId], references: [id])
+  recipients   String[]
+  subject      String
+  bodyHtml     String?
+  attachmentPath String?
+  period       String?
+  status       OutboxStatus @default(PENDING)
+  attempts     Int          @default(0)
+  lastAttemptAt DateTime?
+  sentAt       DateTime?
+  errorMessage String?
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@map("email_outbox")
+}
+
+// ─── Sync ─────────────────────────────────────────────────────────────────────
+// This table lives only on devices (SQLite via Drift).
+// On the server it is used to track the global sequence.
+
+model SyncSequence {
+  id  Int    @id @default(autoincrement())
+  seq BigInt @default(0)
+
+  @@map("sync_sequence")
+}
