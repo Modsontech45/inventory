@@ -9,6 +9,7 @@ class Api {
 
   static const String products = 'products';
   static const String sales = 'sales';
+  static const String salesSummary = 'sales/summary';
   static const String stock = 'stock';
   static const String customers = 'customers';
   static const String users = 'users';

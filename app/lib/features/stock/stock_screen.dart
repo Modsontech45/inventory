@@ -22,34 +22,76 @@ class StockScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('Stock'),
         actions: [
-          IconButton(icon: const Icon(Icons.warning_amber, color: Colors.amber), onPressed: () => _showLowStock(context, ref)),
-          IconButton(icon: const Icon(Icons.refresh), onPressed: () => ref.invalidate(_stockProvider)),
+          IconButton(
+            icon: const Icon(Icons.warning_amber, color: Colors.amber),
+            tooltip: 'Stock faible',
+            onPressed: () => _showLowStock(context, ref),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: () => ref.invalidate(_stockProvider),
+          ),
         ],
       ),
       body: ref.watch(_stockProvider).when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Erreur: $e')),
-        data: (items) => _StockList(items: items.cast<Map<String, dynamic>>()),
+        error: (e, _) => _ErrorRetry(error: e.toString(), onRetry: () => ref.invalidate(_stockProvider)),
+        data: (items) => items.isEmpty
+            ? _emptyState()
+            : _StockList(items: items.cast<Map<String, dynamic>>()),
       ),
     );
   }
 
+  Widget _emptyState() => const Center(
+    child: Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Icon(Icons.inventory_2_outlined, size: 64, color: kTextSecondary),
+        SizedBox(height: 12),
+        Text('Aucun stock disponible', style: TextStyle(fontSize: 16, color: kTextSecondary)),
+        SizedBox(height: 4),
+        Text('Ajoutez des articles dans l\'onglet Articles', style: TextStyle(fontSize: 13, color: kTextSecondary)),
+      ],
+    ),
+  );
+
   void _showLowStock(BuildContext context, WidgetRef ref) {
     ref.read(_stockProvider).whenData((items) {
-      final low = items.cast<Map<String, dynamic>>().where((i) => (i['isLowStock'] as bool? ?? false) || (i['isOutOfStock'] as bool? ?? false)).toList();
+      final all = items.cast<Map<String, dynamic>>();
+      final low = all.where((i) => (i['isLowStock'] as bool? ?? false) || (i['isOutOfStock'] as bool? ?? false)).toList();
       showModalBottomSheet(
         context: context,
         builder: (ctx) => ListView(
           padding: const EdgeInsets.all(16),
           children: [
-            Text('Stock faible / rupture (${low.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
+            Text('Stock faible / rupture (${low.length})',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700)),
             const SizedBox(height: 12),
-            ...low.map((i) => ListTile(
-              leading: Icon(i['isOutOfStock'] as bool? ?? false ? Icons.close : Icons.warning_amber, color: i['isOutOfStock'] as bool? ?? false ? kDanger : kWarning),
-              title: Text(i['name'] as String? ?? ''),
-              subtitle: Text(i['brand'] as String? ?? ''),
-              trailing: Text('${i['qtyInBase']} ${i['baseUnitName'] ?? 'u'}', style: TextStyle(fontWeight: FontWeight.w700, color: (i['isOutOfStock'] as bool? ?? false) ? kDanger : kWarning)),
-            )),
+            if (low.isEmpty)
+              const Text('Aucun article en rupture ou stock faible', style: TextStyle(color: kTextSecondary))
+            else
+              ...low.map((i) {
+                final prod = i['product'] as Map? ?? {};
+                final units = (prod['units'] as List?)?.cast<Map>() ?? [];
+                final base = units.where((u) => u['isBase'] == true).firstOrNull ?? (units.isNotEmpty ? units.first : null);
+                final isOut = i['isOutOfStock'] as bool? ?? false;
+                return ListTile(
+                  leading: Icon(
+                    isOut ? Icons.close : Icons.warning_amber,
+                    color: isOut ? kDanger : kWarning,
+                  ),
+                  title: Text(prod['name'] as String? ?? ''),
+                  subtitle: Text(prod['brand'] as String? ?? ''),
+                  trailing: Text(
+                    '${i['cachedQty']} ${base?['name'] ?? 'u'}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      color: isOut ? kDanger : kWarning,
+                    ),
+                  ),
+                );
+              }),
           ],
         ),
       );
@@ -72,14 +114,22 @@ class _StockListState extends State<_StockList> {
   Widget build(BuildContext context) {
     final filtered = _query.isEmpty
         ? widget.items
-        : widget.items.where((i) => (i['name'] as String? ?? '').toLowerCase().contains(_query.toLowerCase())).toList();
+        : widget.items.where((i) {
+            final prod = i['product'] as Map? ?? {};
+            final name = (prod['name'] as String? ?? '').toLowerCase();
+            final brand = (prod['brand'] as String? ?? '').toLowerCase();
+            return name.contains(_query.toLowerCase()) || brand.contains(_query.toLowerCase());
+          }).toList();
 
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.all(12),
           child: TextField(
-            decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Rechercher…'),
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Rechercher…',
+            ),
             onChanged: (v) => setState(() => _query = v),
           ),
         ),
@@ -89,32 +139,60 @@ class _StockListState extends State<_StockList> {
             separatorBuilder: (_, __) => const Divider(height: 1),
             itemBuilder: (_, i) {
               final item = filtered[i];
+              final prod = item['product'] as Map? ?? {};
+              final cat = prod['category'] as Map? ?? {};
+              final units = (prod['units'] as List?)?.cast<Map>() ?? [];
+              final base = units.where((u) => u['isBase'] == true).firstOrNull ?? (units.isNotEmpty ? units.first : null);
+
+              final qty = item['cachedQty'] as int? ?? 0;
               final isLow = item['isLowStock'] as bool? ?? false;
               final isOut = item['isOutOfStock'] as bool? ?? false;
-              final isNeg = item['isNegative'] as bool? ?? false;
+              final isNeg = qty < 0;
 
               Color statusColor = kSuccess;
-              if (isNeg) { statusColor = kDanger; }
-              else if (isOut) { statusColor = kDanger; }
-              else if (isLow) { statusColor = kWarning; }
+              if (isNeg || isOut) {
+                statusColor = kDanger;
+              } else if (isLow) {
+                statusColor = kWarning;
+              }
+
+              final purchasePrice = base?['purchasePrice'] as int? ?? 0;
+              final costValue = qty * purchasePrice;
 
               return ListTile(
+                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 leading: Container(
                   width: 8,
-                  height: 40,
-                  decoration: BoxDecoration(color: statusColor, borderRadius: BorderRadius.circular(4)),
+                  height: 44,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    borderRadius: BorderRadius.circular(4),
+                  ),
                 ),
-                title: Text(item['name'] as String? ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text('${item['category'] ?? ''} ${item['brand'] != null ? '· ${item['brand']}' : ''}'),
+                title: Text(
+                  prod['name'] as String? ?? '',
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text([
+                  if (cat['name'] != null) cat['name'] as String,
+                  if (prod['brand'] != null) prod['brand'] as String,
+                ].join(' · '), style: const TextStyle(fontSize: 12)),
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
                     Text(
-                      '${item['qtyInBase']} ${item['baseUnitName'] ?? 'u'}',
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: statusColor),
+                      '$qty ${base?['name'] ?? 'u'}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14,
+                        color: statusColor,
+                      ),
                     ),
-                    Text(formatFcfa(item['costValue'] as int? ?? 0), style: const TextStyle(fontSize: 11, color: kTextSecondary)),
+                    Text(
+                      formatFcfa(costValue),
+                      style: const TextStyle(fontSize: 11, color: kTextSecondary),
+                    ),
                   ],
                 ),
               );
@@ -122,6 +200,30 @@ class _StockListState extends State<_StockList> {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _ErrorRetry extends StatelessWidget {
+  final String error;
+  final VoidCallback onRetry;
+  const _ErrorRetry({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.wifi_off, size: 48, color: kTextSecondary),
+          const SizedBox(height: 12),
+          const Text('Impossible de charger le stock', style: TextStyle(color: kTextSecondary)),
+          const SizedBox(height: 4),
+          Text(error, style: const TextStyle(fontSize: 11, color: kTextSecondary), textAlign: TextAlign.center),
+          const SizedBox(height: 12),
+          TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh), label: const Text('Réessayer')),
+        ],
+      ),
     );
   }
 }
