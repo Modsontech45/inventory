@@ -70,26 +70,24 @@ export class StockService {
   ) {
     const type = qtyInBase >= 0 ? StockMovementType.ADJUSTMENT_PLUS : StockMovementType.ADJUSTMENT_MINUS;
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.stockMovement.create({
-        data: {
-          id: crypto.randomUUID(),
-          businessId,
-          depotId,
-          productId,
-          userId,
-          deviceId,
-          type,
-          qtyInBase,
-          reason,
-        },
-      });
+    await this.prisma.stockMovement.create({
+      data: {
+        id: crypto.randomUUID(),
+        businessId,
+        depotId,
+        productId,
+        userId,
+        deviceId,
+        type,
+        qtyInBase,
+        reason,
+      },
+    });
 
-      await tx.productStockLevel.upsert({
-        where: { productId_depotId: { productId, depotId } },
-        create: { id: crypto.randomUUID(), businessId, productId, depotId, cachedQty: qtyInBase },
-        update: { cachedQty: { increment: qtyInBase } },
-      });
+    await this.prisma.productStockLevel.upsert({
+      where: { productId_depotId: { productId, depotId } },
+      create: { id: crypto.randomUUID(), businessId, productId, depotId, cachedQty: qtyInBase },
+      update: { cachedQty: { increment: qtyInBase } },
     });
   }
 
