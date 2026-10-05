@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
@@ -15,11 +14,7 @@ import '../shell/main_shell.dart';
 
 const _storage = FlutterSecureStorage();
 
-/// Default server URL based on platform:
-/// - Android emulator reaches host machine at 10.0.2.2
-/// - Windows desktop uses localhost
-String get _defaultServerUrl =>
-    Platform.isAndroid ? 'http://10.0.2.2:3000' : 'http://localhost:3000';
+const _defaultServerUrl = 'https://inventory-1axt.onrender.com';
 
 final appRouter = GoRouter(
   initialLocation: '/dashboard',

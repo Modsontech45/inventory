@@ -42,7 +42,7 @@ class ApiClient {
 
   Future<String> get baseUrl async {
     final stored = await _storage.read(key: 'server_url');
-    return (stored != null && stored.isNotEmpty) ? stored : 'http://localhost:3000';
+    return (stored != null && stored.isNotEmpty) ? stored : 'https://inventory-1axt.onrender.com';
   }
 
   String v1(String base) => '$base/api/v1';
