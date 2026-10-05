@@ -119,6 +119,7 @@ model Business {
   depots      Depot[]
   users       User[]
   categories  Category[]
+  units       Unit[]
   products    Product[]
   customers   Customer[]
   suppliers   Supplier[]
@@ -136,6 +137,19 @@ model Business {
   cashSessions   CashSession[]
 
   @@map("businesses")
+}
+
+model Unit {
+  id         String   @id @default(uuid()) @db.Uuid
+  businessId String   @db.Uuid
+  business   Business @relation(fields: [businessId], references: [id])
+  name       String
+  deleted    Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([businessId, name])
+  @@map("units")
 }
 
 model BusinessSettings {

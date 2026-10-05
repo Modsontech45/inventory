@@ -10,6 +10,7 @@ import { UsersModule } from './users/users.module.js';
 import { SyncModule } from './sync/sync.module.js';
 import { ReportsModule } from './reports/reports.module.js';
 import { DashboardModule } from './dashboard/dashboard.module.js';
+import { UnitsModule } from './units/units.module.js';
 import { HealthController } from './health/health.controller.js';
 
 @Module({
@@ -25,6 +26,7 @@ import { HealthController } from './health/health.controller.js';
     SyncModule,
     ReportsModule,
     DashboardModule,
+    UnitsModule,
   ],
   controllers: [HealthController],
 })

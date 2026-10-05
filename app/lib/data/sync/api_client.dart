@@ -82,6 +82,11 @@ class ApiClient {
     return _dio.put(url, data: data);
   }
 
+  Future<Response> delete(String path) async {
+    final url = await _resolveUrl(path);
+    return _dio.delete(url);
+  }
+
   Future<String> _resolveUrl(String path) async {
     if (path.startsWith('http')) return path;
     final base = await baseUrl;

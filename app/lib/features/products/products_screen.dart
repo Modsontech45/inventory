@@ -18,10 +18,10 @@ final _categoriesProvider = FutureProvider.autoDispose<List<dynamic>>((ref) asyn
   return res.data as List<dynamic>;
 });
 
-final _unitNamesProvider = FutureProvider.autoDispose<List<String>>((ref) async {
+final _unitNamesProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
   final api = ref.watch(_apiProvP);
-  final res = await api.get('${Api.products}/unit-names');
-  return (res.data as List).cast<String>();
+  final res = await api.get(Api.units);
+  return (res.data as List).cast<Map<String, dynamic>>();
 });
 
 final _apiProvP = Provider<ApiClient>((ref) => ApiClient());
@@ -36,10 +36,16 @@ class ProductsScreen extends ConsumerWidget {
         title: const Text('Articles'),
         actions: [
           IconButton(
+            icon: const Icon(Icons.straighten),
+            tooltip: 'Gérer les unités',
+            onPressed: () => _showUnitsManager(context, ref),
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () {
               ref.invalidate(_productsProvider);
               ref.invalidate(_categoriesProvider);
+              ref.invalidate(_unitNamesProvider);
             },
           ),
         ],
@@ -80,7 +86,7 @@ class ProductsScreen extends ConsumerWidget {
 
   void _showAddProduct(BuildContext context, WidgetRef ref) async {
     final categories = await ref.read(_categoriesProvider.future).catchError((_) => <dynamic>[]);
-    final unitNames = await ref.read(_unitNamesProvider.future).catchError((_) => <String>[]);
+    final units = await ref.read(_unitNamesProvider.future).catchError((_) => <Map<String, dynamic>>[]);
     if (!context.mounted) return;
     final added = await showModalBottomSheet<bool>(
       context: context,
@@ -88,7 +94,7 @@ class ProductsScreen extends ConsumerWidget {
       backgroundColor: Colors.transparent,
       builder: (_) => _AddProductSheet(
         categories: categories.cast<Map<String, dynamic>>(),
-        existingUnitNames: unitNames,
+        existingUnits: units,
       ),
     );
     if (added == true) {
@@ -96,6 +102,14 @@ class ProductsScreen extends ConsumerWidget {
       ref.invalidate(_categoriesProvider);
       ref.invalidate(_unitNamesProvider);
     }
+  }
+
+  Future<void> _showUnitsManager(BuildContext context, WidgetRef ref) async {
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _UnitsManagerSheet(onChanged: () => ref.invalidate(_unitNamesProvider)),
+    );
   }
 }
 
@@ -188,8 +202,8 @@ class _ProductsListState extends State<_ProductsList> {
 
 class _AddProductSheet extends StatefulWidget {
   final List<Map<String, dynamic>> categories;
-  final List<String> existingUnitNames;
-  const _AddProductSheet({required this.categories, required this.existingUnitNames});
+  final List<Map<String, dynamic>> existingUnits; // [{id, name}]
+  const _AddProductSheet({required this.categories, required this.existingUnits});
 
   @override
   State<_AddProductSheet> createState() => _AddProductSheetState();
@@ -208,8 +222,7 @@ class _AddProductSheetState extends State<_AddProductSheet> {
   final _wholesaleMinQtyCtrl = TextEditingController(text: '10');
 
   String? _categoryId;
-  String? _selectedUnitName;   // null = none selected yet
-  bool _showCustomUnit = false; // true = show free-text field
+  String? _selectedUnitName;   // null = nothing selected
   bool _loading = false;
   String? _error;
 
@@ -221,13 +234,11 @@ class _AddProductSheetState extends State<_AddProductSheet> {
     super.dispose();
   }
 
-  String get _effectiveUnitName =>
-      _showCustomUnit ? _unitNameCtrl.text.trim() : (_selectedUnitName ?? '');
-
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    if (_effectiveUnitName.isEmpty) {
-      setState(() => _error = 'Choisissez ou créez une unité');
+    final unitName = _selectedUnitName ?? _unitNameCtrl.text.trim();
+    if (unitName.isEmpty) {
+      setState(() => _error = 'Sélectionnez ou créez une unité d\'abord');
       return;
     }
     setState(() { _loading = true; _error = null; });
@@ -241,7 +252,7 @@ class _AddProductSheetState extends State<_AddProductSheet> {
         'units': [
           {
             'id': uuid.v4(),
-            'name': _effectiveUnitName,
+            'name': unitName,
             'isBase': true,
             'factor': 1,
             'purchasePrice': int.tryParse(_purchasePriceCtrl.text) ?? 0,
@@ -323,42 +334,7 @@ class _AddProductSheetState extends State<_AddProductSheet> {
               // Unit selection
               const Text('Unité de base', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextSecondary)),
               const SizedBox(height: 8),
-              if (widget.existingUnitNames.isNotEmpty) ...[
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    ...widget.existingUnitNames.map((name) => ChoiceChip(
-                      label: Text(name),
-                      selected: _selectedUnitName == name && !_showCustomUnit,
-                      onSelected: (_) => setState(() {
-                        _selectedUnitName = name;
-                        _showCustomUnit = false;
-                      }),
-                      selectedColor: kPrimary.withValues(alpha: 0.15),
-                      labelStyle: TextStyle(
-                        color: (_selectedUnitName == name && !_showCustomUnit) ? kPrimary : kTextSecondary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    )),
-                    ChoiceChip(
-                      label: const Text('+ Nouvelle unité'),
-                      selected: _showCustomUnit,
-                      onSelected: (_) => setState(() {
-                        _showCustomUnit = true;
-                        _selectedUnitName = null;
-                      }),
-                      selectedColor: kSuccess.withValues(alpha: 0.15),
-                      labelStyle: TextStyle(
-                        color: _showCustomUnit ? kSuccess : kTextSecondary,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-              ],
-              if (widget.existingUnitNames.isEmpty || _showCustomUnit)
+              if (widget.existingUnits.isEmpty)
                 TextFormField(
                   controller: _unitNameCtrl,
                   decoration: const InputDecoration(
@@ -366,9 +342,21 @@ class _AddProductSheetState extends State<_AddProductSheet> {
                     hintText: 'ex: Sac 50kg, Barre 12m, Litre…',
                     prefixIcon: Icon(Icons.scale),
                   ),
-                  validator: (v) => (_showCustomUnit || widget.existingUnitNames.isEmpty)
-                      ? ((v == null || v.trim().isEmpty) ? 'Requis' : null)
-                      : null,
+                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Requis' : null,
+                )
+              else
+                DropdownButtonFormField<String>(
+                  initialValue: _selectedUnitName,
+                  decoration: const InputDecoration(
+                    labelText: 'Unité *',
+                    prefixIcon: Icon(Icons.scale),
+                  ),
+                  items: widget.existingUnits.map((u) => DropdownMenuItem(
+                    value: u['name'] as String,
+                    child: Text(u['name'] as String),
+                  )).toList(),
+                  onChanged: (v) => setState(() => _selectedUnitName = v),
+                  validator: (v) => (v == null || v.isEmpty) ? 'Requis' : null,
                 ),
               const SizedBox(height: 10),
               Row(children: [
@@ -453,6 +441,181 @@ class _ErrorRetry extends StatelessWidget {
           const SizedBox(height: 8),
           TextButton.icon(onPressed: onRetry, icon: const Icon(Icons.refresh), label: const Text('Réessayer')),
         ],
+      ),
+    );
+  }
+}
+
+// ── Units Manager Sheet ───────────────────────────────────────────────────────
+
+class _UnitsManagerSheet extends StatefulWidget {
+  final VoidCallback onChanged;
+  const _UnitsManagerSheet({required this.onChanged});
+
+  @override
+  State<_UnitsManagerSheet> createState() => _UnitsManagerSheetState();
+}
+
+class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
+  final _api = ApiClient();
+  final _nameCtrl = TextEditingController();
+  List<Map<String, dynamic>> _units = [];
+  bool _loadingUnits = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    setState(() { _loadingUnits = true; _error = null; });
+    try {
+      final res = await _api.get(Api.units);
+      setState(() {
+        _units = (res.data as List).cast<Map<String, dynamic>>();
+        _loadingUnits = false;
+      });
+    } catch (e) {
+      setState(() { _error = 'Erreur de chargement'; _loadingUnits = false; });
+    }
+  }
+
+  Future<void> _create() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) return;
+    setState(() => _saving = true);
+    try {
+      await _api.post(Api.units, data: {'name': name});
+      _nameCtrl.clear();
+      widget.onChanged();
+      await _load();
+    } catch (e) {
+      setState(() => _error = e.toString().contains('409') ? '"$name" existe déjà' : 'Erreur lors de la création');
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _delete(String id, String name) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Supprimer l\'unité'),
+        content: Text('Supprimer "$name" ?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Supprimer', style: TextStyle(color: kDanger)),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await _api.delete('${Api.units}/$id');
+      widget.onChanged();
+      await _load();
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      expand: false,
+      initialChildSize: 0.6,
+      minChildSize: 0.4,
+      maxChildSize: 0.9,
+      builder: (_, scrollCtrl) => Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
+              child: Row(children: [
+                const Expanded(
+                  child: Text('Gérer les unités',
+                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                ),
+                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+              ]),
+            ),
+            Padding(
+              padding: EdgeInsets.only(
+                left: 16, right: 16, bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+              ),
+              child: Row(children: [
+                Expanded(
+                  child: TextField(
+                    controller: _nameCtrl,
+                    decoration: const InputDecoration(
+                      hintText: 'Nouvelle unité (ex: Sac 50kg)',
+                      prefixIcon: Icon(Icons.add),
+                    ),
+                    textCapitalization: TextCapitalization.words,
+                    onSubmitted: (_) => _create(),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                FilledButton(
+                  onPressed: _saving ? null : _create,
+                  child: _saving
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Text('Ajouter'),
+                ),
+              ]),
+            ),
+            if (_error != null)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+                child: Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
+              ),
+            const Divider(height: 1),
+            Expanded(
+              child: _loadingUnits
+                  ? const Center(child: CircularProgressIndicator())
+                  : _units.isEmpty
+                      ? const Center(
+                          child: Text('Aucune unité créée', style: TextStyle(color: kTextSecondary)),
+                        )
+                      : ListView.separated(
+                          controller: scrollCtrl,
+                          itemCount: _units.length,
+                          separatorBuilder: (_, __) => const Divider(height: 1),
+                          itemBuilder: (_, i) {
+                            final u = _units[i];
+                            return ListTile(
+                              leading: Container(
+                                width: 36, height: 36,
+                                decoration: BoxDecoration(
+                                  color: kPrimary.withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: const Icon(Icons.straighten, color: kPrimary, size: 18),
+                              ),
+                              title: Text(u['name'] as String, style: const TextStyle(fontWeight: FontWeight.w600)),
+                              trailing: IconButton(
+                                icon: const Icon(Icons.delete_outline, color: kDanger),
+                                onPressed: () => _delete(u['id'] as String, u['name'] as String),
+                              ),
+                            );
+                          },
+                        ),
+            ),
+          ],
+        ),
       ),
     );
   }

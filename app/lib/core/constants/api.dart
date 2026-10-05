@@ -8,6 +8,7 @@ class Api {
   static const String authPairingCodes = 'auth/pairing-codes';
 
   static const String products = 'products';
+  static const String units = 'units';
   static const String sales = 'sales';
   static const String salesSummary = 'sales/summary';
   static const String stock = 'stock';
