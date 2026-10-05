@@ -18,83 +18,78 @@ export class SalesService {
 
     const number = await this.generateSaleNumber(businessId, depotId, deviceId);
 
-    const sale = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.sale.create({
+    const sale = await this.prisma.sale.create({
+      data: {
+        id: dto.id,
+        businessId,
+        depotId,
+        customerId: dto.customerId,
+        userId,
+        deviceId,
+        number,
+        totalAmount,
+        cashSessionId: dto.cashSessionId,
+        notes: dto.notes,
+        lines: {
+          create: dto.lines.map((l) => ({
+            id: l.id,
+            businessId,
+            productId: l.productId,
+            unitId: l.unitId,
+            qty: l.qty,
+            unitPrice: l.unitPrice,
+            discount: l.discount,
+            lineTotal: l.lineTotal,
+          })),
+        },
+        payments: {
+          create: dto.payments.map((p) => ({
+            id: p.id,
+            businessId,
+            depotId,
+            deviceId,
+            method: p.method,
+            amount: p.amount,
+            reference: p.reference,
+          })),
+        },
+      },
+      include: { lines: true, payments: true },
+    });
+
+    // Create stock exit movements for each line
+    for (const line of dto.lines) {
+      const unit = await this.prisma.productUnit.findUnique({ where: { id: line.unitId } });
+      if (!unit) continue;
+      const qtyInBase = line.qty * unit.factor;
+
+      await this.prisma.stockMovement.create({
         data: {
-          id: dto.id,
+          id: crypto.randomUUID(),
           businessId,
           depotId,
-          customerId: dto.customerId,
+          productId: line.productId,
           userId,
           deviceId,
-          number,
-          totalAmount,
-          cashSessionId: dto.cashSessionId,
-          notes: dto.notes,
-          lines: {
-            create: dto.lines.map((l) => ({
-              id: l.id,
-              businessId,
-              productId: l.productId,
-              unitId: l.unitId,
-              qty: l.qty,
-              unitPrice: l.unitPrice,
-              discount: l.discount,
-              lineTotal: l.lineTotal,
-            })),
-          },
-          payments: {
-            create: dto.payments.map((p) => ({
-              id: p.id,
-              businessId,
-              depotId,
-              deviceId,
-              method: p.method,
-              amount: p.amount,
-              reference: p.reference,
-            })),
-          },
+          type: StockMovementType.SALE_EXIT,
+          qtyInBase: -qtyInBase,
+          refDocId: dto.id,
+          refDocType: 'SALE',
         },
-        include: { lines: true, payments: true },
       });
 
-      // Create stock exit movements for each line
-      for (const line of dto.lines) {
-        const unit = await tx.productUnit.findUnique({ where: { id: line.unitId } });
-        if (!unit) continue;
-        const qtyInBase = line.qty * unit.factor;
-
-        await tx.stockMovement.create({
-          data: {
-            id: crypto.randomUUID(),
-            businessId,
-            depotId,
-            productId: line.productId,
-            userId,
-            deviceId,
-            type: StockMovementType.SALE_EXIT,
-            qtyInBase: -qtyInBase,
-            refDocId: dto.id,
-            refDocType: 'SALE',
-          },
-        });
-
-        // Update cached stock
-        await tx.productStockLevel.upsert({
-          where: { productId_depotId: { productId: line.productId, depotId } },
-          create: {
-            id: crypto.randomUUID(),
-            businessId,
-            productId: line.productId,
-            depotId,
-            cachedQty: -qtyInBase,
-          },
-          update: { cachedQty: { decrement: qtyInBase } },
-        });
-      }
-
-      return created;
-    });
+      await this.prisma.productStockLevel.upsert({
+        where: { productId_depotId: { productId: line.productId, depotId } },
+        create: {
+          id: crypto.randomUUID(),
+          businessId,
+          productId: line.productId,
+          depotId,
+          cachedQty: -qtyInBase,
+        },
+        update: { cachedQty: { decrement: qtyInBase } },
+      });
+    }
 
     return sale;
   }
@@ -146,44 +141,41 @@ export class SalesService {
     });
     if (!sale) throw new NotFoundException('Vente introuvable ou déjà annulée');
 
-    await this.prisma.$transaction(async (tx) => {
-      await tx.sale.update({
-        where: { id },
-        data: { status: SaleStatus.CANCELLED, cancelReason: dto.reason, cancelledBy: userId },
+    await this.prisma.sale.update({
+      where: { id },
+      data: { status: SaleStatus.CANCELLED, cancelReason: dto.reason, cancelledBy: userId },
+    });
+
+    for (const line of sale.lines) {
+      const qtyInBase = line.qty * line.unit.factor;
+      await this.prisma.stockMovement.create({
+        data: {
+          id: crypto.randomUUID(),
+          businessId,
+          depotId,
+          productId: line.productId,
+          userId,
+          deviceId,
+          type: StockMovementType.CUSTOMER_RETURN,
+          qtyInBase: qtyInBase,
+          refDocId: id,
+          refDocType: 'SALE',
+          reason: `Annulation vente ${sale.number}: ${dto.reason}`,
+        },
       });
 
-      // Reverse stock movements
-      for (const line of sale.lines) {
-        const qtyInBase = line.qty * line.unit.factor;
-        await tx.stockMovement.create({
-          data: {
-            id: crypto.randomUUID(),
-            businessId,
-            depotId,
-            productId: line.productId,
-            userId,
-            deviceId,
-            type: StockMovementType.CUSTOMER_RETURN,
-            qtyInBase: qtyInBase,
-            refDocId: id,
-            refDocType: 'SALE',
-            reason: `Annulation vente ${sale.number}: ${dto.reason}`,
-          },
-        });
-
-        await tx.productStockLevel.upsert({
-          where: { productId_depotId: { productId: line.productId, depotId } },
-          create: {
-            id: crypto.randomUUID(),
-            businessId,
-            productId: line.productId,
-            depotId,
-            cachedQty: qtyInBase,
-          },
-          update: { cachedQty: { increment: qtyInBase } },
-        });
-      }
-    });
+      await this.prisma.productStockLevel.upsert({
+        where: { productId_depotId: { productId: line.productId, depotId } },
+        create: {
+          id: crypto.randomUUID(),
+          businessId,
+          productId: line.productId,
+          depotId,
+          cachedQty: qtyInBase,
+        },
+        update: { cachedQty: { increment: qtyInBase } },
+      });
+    }
   }
 
   async getDailySummary(businessId: string, depotId: string, date?: string) {

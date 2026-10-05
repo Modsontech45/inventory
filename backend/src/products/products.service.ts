@@ -79,43 +79,39 @@ export class ProductsService {
       }
     }
 
-    const product = await this.prisma.$transaction(async (tx) => {
-      const updated = await tx.product.update({
-        where: { id },
-        data: { ...productData, updatedAt: new Date() },
-        include: { units: { where: { deleted: false } } },
-      });
-
-      if (units) {
-        for (const unit of units) {
-          await tx.productUnit.upsert({
-            where: { id: unit.id },
-            create: { ...unit, businessId, productId: id },
-            update: { ...unit },
-          });
-        }
-      }
-
-      for (const entry of priceHistoryEntries) {
-        await tx.priceHistory.create({
-          data: {
-            id: crypto.randomUUID(),
-            businessId,
-            productId: id,
-            unitId: entry.unitId,
-            field: entry.field,
-            oldValue: entry.oldValue,
-            newValue: entry.newValue,
-            changedBy: userId,
-            deviceId,
-          },
-        });
-      }
-
-      return updated;
+    const updated = await this.prisma.product.update({
+      where: { id },
+      data: { ...productData, updatedAt: new Date() },
+      include: { units: { where: { deleted: false } } },
     });
 
-    return product;
+    if (units) {
+      for (const unit of units) {
+        await this.prisma.productUnit.upsert({
+          where: { id: unit.id },
+          create: { ...unit, businessId, productId: id },
+          update: { ...unit },
+        });
+      }
+    }
+
+    for (const entry of priceHistoryEntries) {
+      await this.prisma.priceHistory.create({
+        data: {
+          id: crypto.randomUUID(),
+          businessId,
+          productId: id,
+          unitId: entry.unitId,
+          field: entry.field,
+          oldValue: entry.oldValue,
+          newValue: entry.newValue,
+          changedBy: userId,
+          deviceId,
+        },
+      });
+    }
+
+    return updated;
   }
 
   async archive(id: string, businessId: string) {
