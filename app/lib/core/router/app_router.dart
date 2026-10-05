@@ -27,9 +27,9 @@ final appRouter = GoRouter(
 
     if (loc == '/welcome' || loc == '/pair' || loc == '/setup') return null;
 
-    // Ensure server URL is always set
+    // Always update server URL so stale localhost values are overwritten
     final serverUrl = await _storage.read(key: 'server_url');
-    if (serverUrl == null || serverUrl.isEmpty) {
+    if (serverUrl == null || serverUrl.isEmpty || serverUrl.contains('localhost') || serverUrl.contains('10.0.2.2')) {
       await _storage.write(key: 'server_url', value: _defaultServerUrl);
     }
 

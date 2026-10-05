@@ -167,9 +167,7 @@ export class AuthService {
     const device = await this.prisma.device.findFirst({ where: { id: deviceId, businessId: requestingBusinessId } });
     if (!device) throw new NotFoundException('Appareil introuvable');
 
-    await this.prisma.$transaction([
-      this.prisma.device.update({ where: { id: deviceId }, data: { revoked: true } }),
-      this.prisma.refreshToken.updateMany({ where: { deviceId }, data: { revoked: true } }),
-    ]);
+    await this.prisma.device.update({ where: { id: deviceId }, data: { revoked: true } });
+    await this.prisma.refreshToken.updateMany({ where: { deviceId }, data: { revoked: true } });
   }
 }

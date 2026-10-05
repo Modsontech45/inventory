@@ -45,7 +45,11 @@ class ApiClient {
     return (stored != null && stored.isNotEmpty) ? stored : 'https://inventory-1axt.onrender.com';
   }
 
-  String v1(String base) => '$base/api/v1';
+  String _buildUrl(String base, String path) {
+    final b = base.endsWith('/') ? base.substring(0, base.length - 1) : base;
+    final p = path.startsWith('/') ? path.substring(1) : path;
+    return '$b/api/v1/$p';
+  }
 
   Future<bool> _tryRefresh() async {
     try {
@@ -53,7 +57,7 @@ class ApiClient {
       final deviceId = await _storage.read(key: 'device_id');
       if (refresh == null || deviceId == null) return false;
       final base = await baseUrl;
-      final res = await _dio.post('${v1(base)}/auth/refresh',
+      final res = await _dio.post(_buildUrl(base, 'auth/refresh'),
           data: {'refreshToken': refresh, 'deviceId': deviceId});
       await _storage.write(key: 'access_token', value: res.data['accessToken'] as String);
       await _storage.write(key: 'refresh_token', value: res.data['refreshToken'] as String);
@@ -78,17 +82,16 @@ class ApiClient {
     return _dio.put(url, data: data);
   }
 
-  // If path is already a full URL, use it directly; otherwise prefix with base/api/v1
   Future<String> _resolveUrl(String path) async {
     if (path.startsWith('http')) return path;
     final base = await baseUrl;
-    return '${v1(base)}/$path'.replaceAll('//', '/').replaceAll('http:/', 'http://');
+    return _buildUrl(base, path);
   }
 
   Future<bool> isOnline() async {
     try {
       final base = await baseUrl;
-      await _dio.get('${v1(base)}/health',
+      await _dio.get(_buildUrl(base, 'health'),
           options: Options(receiveTimeout: const Duration(seconds: 3)));
       return true;
     } catch (_) {

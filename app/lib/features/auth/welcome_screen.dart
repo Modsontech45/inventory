@@ -120,8 +120,11 @@ class _LoginTabState extends State<_LoginTab> {
         depotId: body['depotId'] as String,
       );
       if (mounted) context.go('/dashboard');
-    } catch (_) {
-      setState(() => _error = 'Numéro ou PIN incorrect');
+    } catch (e) {
+      final msg = e.toString().contains('401') || e.toString().contains('Unauthorized')
+          ? 'Numéro ou PIN incorrect'
+          : 'Erreur réseau — vérifiez votre connexion';
+      setState(() => _error = msg);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
@@ -225,7 +228,12 @@ class _RegisterTabState extends State<_RegisterTab> {
       );
       if (mounted) context.go('/dashboard');
     } catch (e) {
-      setState(() => _error = 'Erreur: vérifiez vos informations');
+      final msg = e.toString().contains('409') || e.toString().contains('Conflict')
+          ? 'Ce numéro est déjà utilisé'
+          : e.toString().contains('connectTimeout') || e.toString().contains('SocketException')
+              ? 'Impossible de contacter le serveur'
+              : 'Erreur: vérifiez vos informations';
+      setState(() => _error = msg);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
