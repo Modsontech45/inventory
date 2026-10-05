@@ -79,20 +79,28 @@ export class CustomersService {
   }
 
   async getCustomerBalance(customerId: string, businessId: string): Promise<number> {
-    // Total credit sales (amount not paid as CREDIT payment method)
-    const creditSales = await this.prisma.salePayment.aggregate({
-      where: { businessId, method: 'CREDIT', deleted: false, sale: { customerId, deleted: false } },
-      _sum: { amount: true },
+    // Step 1: get sale IDs for this customer (avoid nested relation filter in aggregate)
+    const customerSales = await this.prisma.sale.findMany({
+      where: { businessId, customerId, deleted: false },
+      select: { id: true },
     });
+    const saleIds = customerSales.map((s) => s.id);
 
-    // Total repayments
+    let totalDebt = 0;
+    if (saleIds.length > 0) {
+      const creditPayments = await this.prisma.salePayment.aggregate({
+        where: { businessId, method: 'CREDIT', deleted: false, saleId: { in: saleIds } },
+        _sum: { amount: true },
+      });
+      totalDebt = creditPayments._sum.amount ?? 0;
+    }
+
     const repayments = await this.prisma.customerPayment.aggregate({
       where: { businessId, customerId },
       _sum: { amount: true },
     });
-
-    const totalDebt = creditSales._sum.amount ?? 0;
     const totalPaid = repayments._sum.amount ?? 0;
+
     return totalDebt - totalPaid;
   }
 
