@@ -586,92 +586,99 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    return DraggableScrollableSheet(
-      expand: false,
-      initialChildSize: 0.6,
-      minChildSize: 0.4,
-      maxChildSize: 0.9,
-      builder: (_, scrollCtrl) => Container(
-        decoration: const BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-        ),
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.fromLTRB(20, 16, 16, 8),
-              child: Row(children: [
-                const Expanded(
-                  child: Text('Gérer les unités',
-                      style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                ),
-                IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
-              ]),
-            ),
-            Padding(
-              padding: EdgeInsets.only(
-                left: 16, right: 16, bottom: MediaQuery.of(context).viewInsets.bottom + 8,
+    final screenH = MediaQuery.of(context).size.height;
+    return Container(
+      height: screenH * 0.65,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Handle bar
+          Center(
+            child: Container(
+              margin: const EdgeInsets.only(top: 10, bottom: 4),
+              width: 40, height: 4,
+              decoration: BoxDecoration(
+                color: Colors.grey.shade300,
+                borderRadius: BorderRadius.circular(2),
               ),
-              child: Row(children: [
-                Expanded(
-                  child: TextField(
-                    controller: _nameCtrl,
-                    decoration: const InputDecoration(
-                      hintText: 'Nouvelle unité (ex: Sac 50kg)',
-                      prefixIcon: Icon(Icons.add),
-                    ),
-                    textCapitalization: TextCapitalization.words,
-                    onSubmitted: (_) => _create(),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
+            child: Row(children: [
+              const Expanded(
+                child: Text('Gérer les unités',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              ),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+            ]),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Row(children: [
+              Expanded(
+                child: TextField(
+                  controller: _nameCtrl,
+                  decoration: const InputDecoration(
+                    hintText: 'Nouvelle unité (ex: Sac 50kg)',
+                    prefixIcon: Icon(Icons.add),
                   ),
+                  textCapitalization: TextCapitalization.words,
+                  onSubmitted: (_) => _create(),
                 ),
-                const SizedBox(width: 8),
-                FilledButton(
-                  onPressed: _saving ? null : _create,
-                  child: _saving
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                      : const Text('Ajouter'),
-                ),
-              ]),
-            ),
-            if (_error != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                child: Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
               ),
-            const Divider(height: 1),
-            Expanded(
-              child: _loadingUnits
-                  ? const Center(child: CircularProgressIndicator())
-                  : _units.isEmpty
-                      ? const Center(
-                          child: Text('Aucune unité créée', style: TextStyle(color: kTextSecondary)),
-                        )
-                      : ListView.separated(
-                          controller: scrollCtrl,
-                          itemCount: _units.length,
-                          separatorBuilder: (_, __) => const Divider(height: 1),
-                          itemBuilder: (_, i) {
-                            final u = _units[i];
-                            return ListTile(
-                              leading: Container(
-                                width: 36, height: 36,
-                                decoration: BoxDecoration(
-                                  color: kPrimary.withValues(alpha: 0.1),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: const Icon(Icons.straighten, color: kPrimary, size: 18),
-                              ),
-                              title: Text(u['name'] as String, style: const TextStyle(fontWeight: FontWeight.w600)),
-                              trailing: IconButton(
-                                icon: const Icon(Icons.delete_outline, color: kDanger),
-                                onPressed: () => _delete(u['id'] as String, u['name'] as String),
-                              ),
-                            );
-                          },
-                        ),
+              const SizedBox(width: 8),
+              FilledButton(
+                onPressed: _saving ? null : _create,
+                child: _saving
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : const Text('Ajouter'),
+              ),
+            ]),
+          ),
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
             ),
-          ],
-        ),
+          const Divider(height: 1),
+          Expanded(
+            child: _loadingUnits
+                ? const Center(child: CircularProgressIndicator())
+                : _units.isEmpty
+                    ? const Center(
+                        child: Text('Aucune unité créée.\nTapez un nom et appuyez sur Ajouter.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: kTextSecondary)),
+                      )
+                    : ListView.separated(
+                        itemCount: _units.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        itemBuilder: (_, i) {
+                          final u = _units[i];
+                          return ListTile(
+                            leading: Container(
+                              width: 36, height: 36,
+                              decoration: BoxDecoration(
+                                color: kPrimary.withValues(alpha: 0.1),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: const Icon(Icons.straighten, color: kPrimary, size: 18),
+                            ),
+                            title: Text(u['name'] as String,
+                                style: const TextStyle(fontWeight: FontWeight.w600)),
+                            trailing: IconButton(
+                              icon: const Icon(Icons.delete_outline, color: kDanger),
+                              onPressed: () => _delete(u['id'] as String, u['name'] as String),
+                            ),
+                          );
+                        },
+                      ),
+          ),
+        ],
       ),
     );
   }
