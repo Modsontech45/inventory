@@ -222,9 +222,16 @@ class _AddProductSheetState extends State<_AddProductSheet> {
   final _wholesaleMinQtyCtrl = TextEditingController(text: '10');
 
   String? _categoryId;
-  String? _selectedUnitName;   // null = nothing selected
+  String? _selectedUnitName;
+  List<Map<String, dynamic>> _localUnits = []; // kept in sync with the sheet's list
   bool _loading = false;
   String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _localUnits = List.from(widget.existingUnits);
+  }
 
   @override
   void dispose() {
@@ -234,11 +241,54 @@ class _AddProductSheetState extends State<_AddProductSheet> {
     super.dispose();
   }
 
+  static const _kNewUnit = '__new__';
+
+  Future<void> _promptNewUnit() async {
+    final ctrl = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nouvelle unité'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          textCapitalization: TextCapitalization.words,
+          decoration: const InputDecoration(hintText: 'ex: Sac 50kg, Barre 12m…'),
+          onSubmitted: (_) => Navigator.pop(ctx, ctrl.text.trim()),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
+            child: const Text('Créer'),
+          ),
+        ],
+      ),
+    );
+    if (name == null || name.isEmpty) return;
+    try {
+      final res = await _api.post(Api.units, data: {'name': name});
+      final created = res.data as Map<String, dynamic>;
+      setState(() {
+        _localUnits = [..._localUnits, created];
+        _selectedUnitName = created['name'] as String;
+      });
+    } catch (_) {
+      // unit might already exist — just add it locally and select it
+      setState(() {
+        if (!_localUnits.any((u) => u['name'] == name)) {
+          _localUnits = [..._localUnits, {'id': name, 'name': name}];
+        }
+        _selectedUnitName = name;
+      });
+    }
+  }
+
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    final unitName = _selectedUnitName ?? _unitNameCtrl.text.trim();
+    final unitName = _selectedUnitName ?? '';
     if (unitName.isEmpty) {
-      setState(() => _error = 'Sélectionnez ou créez une unité d\'abord');
+      setState(() => _error = 'Sélectionnez ou créez une unité');
       return;
     }
     setState(() { _loading = true; _error = null; });
@@ -334,30 +384,36 @@ class _AddProductSheetState extends State<_AddProductSheet> {
               // Unit selection
               const Text('Unité de base', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextSecondary)),
               const SizedBox(height: 8),
-              if (widget.existingUnits.isEmpty)
-                TextFormField(
-                  controller: _unitNameCtrl,
-                  decoration: const InputDecoration(
-                    labelText: 'Nom de l\'unité *',
-                    hintText: 'ex: Sac 50kg, Barre 12m, Litre…',
-                    prefixIcon: Icon(Icons.scale),
-                  ),
-                  validator: (v) => (v == null || v.trim().isEmpty) ? 'Requis' : null,
-                )
-              else
-                DropdownButtonFormField<String>(
-                  initialValue: _selectedUnitName,
-                  decoration: const InputDecoration(
-                    labelText: 'Unité *',
-                    prefixIcon: Icon(Icons.scale),
-                  ),
-                  items: widget.existingUnits.map((u) => DropdownMenuItem(
+              DropdownButtonFormField<String>(
+                initialValue: _selectedUnitName,
+                decoration: const InputDecoration(
+                  labelText: 'Unité *',
+                  prefixIcon: Icon(Icons.scale),
+                  hintText: 'Sélectionner ou créer une unité',
+                ),
+                items: [
+                  ..._localUnits.map((u) => DropdownMenuItem(
                     value: u['name'] as String,
                     child: Text(u['name'] as String),
-                  )).toList(),
-                  onChanged: (v) => setState(() => _selectedUnitName = v),
-                  validator: (v) => (v == null || v.isEmpty) ? 'Requis' : null,
-                ),
+                  )),
+                  const DropdownMenuItem(
+                    value: _kNewUnit,
+                    child: Row(children: [
+                      Icon(Icons.add, size: 16, color: kSuccess),
+                      SizedBox(width: 6),
+                      Text('Nouvelle unité…', style: TextStyle(color: kSuccess, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ],
+                onChanged: (v) async {
+                  if (v == _kNewUnit) {
+                    await _promptNewUnit();
+                  } else {
+                    setState(() => _selectedUnitName = v);
+                  }
+                },
+                validator: (v) => (v == null || v.isEmpty || v == _kNewUnit) ? 'Requis' : null,
+              ),
               const SizedBox(height: 10),
               Row(children: [
                 Expanded(
