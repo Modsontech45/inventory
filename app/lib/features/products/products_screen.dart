@@ -18,6 +18,12 @@ final _categoriesProvider = FutureProvider.autoDispose<List<dynamic>>((ref) asyn
   return res.data as List<dynamic>;
 });
 
+final _unitNamesProvider = FutureProvider.autoDispose<List<String>>((ref) async {
+  final api = ref.watch(_apiProvP);
+  final res = await api.get('${Api.products}/unit-names');
+  return (res.data as List).cast<String>();
+});
+
 final _apiProvP = Provider<ApiClient>((ref) => ApiClient());
 
 class ProductsScreen extends ConsumerWidget {
@@ -74,16 +80,21 @@ class ProductsScreen extends ConsumerWidget {
 
   void _showAddProduct(BuildContext context, WidgetRef ref) async {
     final categories = await ref.read(_categoriesProvider.future).catchError((_) => <dynamic>[]);
+    final unitNames = await ref.read(_unitNamesProvider.future).catchError((_) => <String>[]);
     if (!context.mounted) return;
     final added = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => _AddProductSheet(categories: categories.cast<Map<String, dynamic>>()),
+      builder: (_) => _AddProductSheet(
+        categories: categories.cast<Map<String, dynamic>>(),
+        existingUnitNames: unitNames,
+      ),
     );
     if (added == true) {
       ref.invalidate(_productsProvider);
       ref.invalidate(_categoriesProvider);
+      ref.invalidate(_unitNamesProvider);
     }
   }
 }
@@ -177,7 +188,8 @@ class _ProductsListState extends State<_ProductsList> {
 
 class _AddProductSheet extends StatefulWidget {
   final List<Map<String, dynamic>> categories;
-  const _AddProductSheet({required this.categories});
+  final List<String> existingUnitNames;
+  const _AddProductSheet({required this.categories, required this.existingUnitNames});
 
   @override
   State<_AddProductSheet> createState() => _AddProductSheetState();
@@ -189,13 +201,15 @@ class _AddProductSheetState extends State<_AddProductSheet> {
 
   final _nameCtrl = TextEditingController();
   final _brandCtrl = TextEditingController();
-  final _unitNameCtrl = TextEditingController(text: 'Unité');
+  final _unitNameCtrl = TextEditingController();
   final _purchasePriceCtrl = TextEditingController();
   final _retailPriceCtrl = TextEditingController();
   final _wholesalePriceCtrl = TextEditingController();
   final _wholesaleMinQtyCtrl = TextEditingController(text: '10');
 
   String? _categoryId;
+  String? _selectedUnitName;   // null = none selected yet
+  bool _showCustomUnit = false; // true = show free-text field
   bool _loading = false;
   String? _error;
 
@@ -207,8 +221,15 @@ class _AddProductSheetState extends State<_AddProductSheet> {
     super.dispose();
   }
 
+  String get _effectiveUnitName =>
+      _showCustomUnit ? _unitNameCtrl.text.trim() : (_selectedUnitName ?? '');
+
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+    if (_effectiveUnitName.isEmpty) {
+      setState(() => _error = 'Choisissez ou créez une unité');
+      return;
+    }
     setState(() { _loading = true; _error = null; });
     try {
       const uuid = Uuid();
@@ -220,7 +241,7 @@ class _AddProductSheetState extends State<_AddProductSheet> {
         'units': [
           {
             'id': uuid.v4(),
-            'name': _unitNameCtrl.text.trim().isEmpty ? 'Unité' : _unitNameCtrl.text.trim(),
+            'name': _effectiveUnitName,
             'isBase': true,
             'factor': 1,
             'purchasePrice': int.tryParse(_purchasePriceCtrl.text) ?? 0,
@@ -299,14 +320,56 @@ class _AddProductSheetState extends State<_AddProductSheet> {
                 ),
               const SizedBox(height: 16),
 
-              // Unit info
+              // Unit selection
               const Text('Unité de base', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: kTextSecondary)),
               const SizedBox(height: 8),
-              TextFormField(
-                controller: _unitNameCtrl,
-                decoration: const InputDecoration(labelText: 'Nom de l\'unité *', hintText: 'ex: Sac 50kg, Barre, Litre…', prefixIcon: Icon(Icons.scale)),
-                validator: (v) => (v == null || v.trim().isEmpty) ? 'Requis' : null,
-              ),
+              if (widget.existingUnitNames.isNotEmpty) ...[
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    ...widget.existingUnitNames.map((name) => ChoiceChip(
+                      label: Text(name),
+                      selected: _selectedUnitName == name && !_showCustomUnit,
+                      onSelected: (_) => setState(() {
+                        _selectedUnitName = name;
+                        _showCustomUnit = false;
+                      }),
+                      selectedColor: kPrimary.withValues(alpha: 0.15),
+                      labelStyle: TextStyle(
+                        color: (_selectedUnitName == name && !_showCustomUnit) ? kPrimary : kTextSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    )),
+                    ChoiceChip(
+                      label: const Text('+ Nouvelle unité'),
+                      selected: _showCustomUnit,
+                      onSelected: (_) => setState(() {
+                        _showCustomUnit = true;
+                        _selectedUnitName = null;
+                      }),
+                      selectedColor: kSuccess.withValues(alpha: 0.15),
+                      labelStyle: TextStyle(
+                        color: _showCustomUnit ? kSuccess : kTextSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+              ],
+              if (widget.existingUnitNames.isEmpty || _showCustomUnit)
+                TextFormField(
+                  controller: _unitNameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'Nom de l\'unité *',
+                    hintText: 'ex: Sac 50kg, Barre 12m, Litre…',
+                    prefixIcon: Icon(Icons.scale),
+                  ),
+                  validator: (v) => (_showCustomUnit || widget.existingUnitNames.isEmpty)
+                      ? ((v == null || v.trim().isEmpty) ? 'Requis' : null)
+                      : null,
+                ),
               const SizedBox(height: 10),
               Row(children: [
                 Expanded(

@@ -19,6 +19,11 @@ export class ProductsController {
     return this.service.searchProducts(q ?? '', user.businessId);
   }
 
+  @Get('unit-names')
+  getUnitNames(@CurrentUser() user: any) {
+    return this.service.getUnitNames(user.businessId);
+  }
+
   @Get('categories')
   getCategories(@CurrentUser() user: any) {
     return this.service.getCategories(user.businessId);

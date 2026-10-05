@@ -118,6 +118,16 @@ export class ProductsService {
     await this.prisma.product.updateMany({ where: { id, businessId }, data: { archived: true } });
   }
 
+  async getUnitNames(businessId: string): Promise<string[]> {
+    const rows = await this.prisma.productUnit.findMany({
+      where: { businessId, deleted: false },
+      select: { name: true },
+      distinct: ['name'],
+      orderBy: { name: 'asc' },
+    });
+    return rows.map((r) => r.name);
+  }
+
   async getCategories(businessId: string) {
     return this.prisma.category.findMany({
       where: { businessId, deleted: false },
