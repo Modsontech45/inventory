@@ -3,6 +3,13 @@ import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module.js';
 import { PrismaService } from './prisma/prisma.service.js';
 
+// Prisma 7 + PrismaPg returns PostgreSQL integers as BigInt.
+// Patch toJSON so JSON.stringify converts them to regular numbers.
+(BigInt.prototype as any).toJSON = function () {
+  const n = Number(this);
+  return Number.isSafeInteger(n) ? n : this.toString();
+};
+
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
