@@ -26,65 +26,50 @@ final _unitNamesProvider = FutureProvider.autoDispose<List<Map<String, dynamic>>
 
 final _apiProvP = Provider<ApiClient>((ref) => ApiClient());
 
-// ── Screen ────────────────────────────────────────────────────────────────────
+// ── Root screen (tabs: Articles | Catalogue prix) ─────────────────────────────
 
 class ProductsScreen extends ConsumerWidget {
   const ProductsScreen({super.key});
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Articles'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.straighten),
-            tooltip: 'Gérer les unités',
-            onPressed: () => _showUnitsManager(context, ref),
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('Articles'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.straighten),
+              tooltip: 'Gérer les unités',
+              onPressed: () => _showUnitsManager(context, ref),
+            ),
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                ref.invalidate(_productsProvider);
+                ref.invalidate(_categoriesProvider);
+                ref.invalidate(_unitNamesProvider);
+              },
+            ),
+          ],
+          bottom: const TabBar(
+            tabs: [
+              Tab(icon: Icon(Icons.list_alt), text: 'Articles'),
+              Tab(icon: Icon(Icons.price_check), text: 'Catalogue prix'),
+            ],
           ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              ref.invalidate(_productsProvider);
-              ref.invalidate(_categoriesProvider);
-              ref.invalidate(_unitNamesProvider);
-            },
-          ),
-        ],
-      ),
-      body: ref.watch(_productsProvider).when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrorRetry(
-          error: e.toString(),
-          onRetry: () => ref.invalidate(_productsProvider),
         ),
-        data: (products) => products.isEmpty
-            ? _emptyState()
-            : _ProductsList(products: products.cast<Map<String, dynamic>>()),
-      ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showForm(context, ref),
-        icon: const Icon(Icons.add),
-        label: const Text('Nouvel article'),
-        backgroundColor: kPrimary,
-        foregroundColor: Colors.white,
+        body: TabBarView(
+          children: [
+            _ArticlesTab(onAdd: () => _showForm(context, ref)),
+            const _CatalogueTab(),
+          ],
+        ),
+        floatingActionButton: _FabForTab(onAdd: () => _showForm(context, ref)),
       ),
     );
   }
-
-  Widget _emptyState() => const Center(
-    child: Column(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        Icon(Icons.inventory_2_outlined, size: 64, color: kTextSecondary),
-        SizedBox(height: 12),
-        Text('Aucun article', style: TextStyle(fontSize: 16, color: kTextSecondary)),
-        SizedBox(height: 4),
-        Text('Appuyez sur + pour ajouter votre premier article',
-            style: TextStyle(fontSize: 13, color: kTextSecondary)),
-      ],
-    ),
-  );
 
   static Future<void> _showForm(BuildContext context, WidgetRef ref,
       {Map<String, dynamic>? product}) async {
@@ -119,7 +104,446 @@ class ProductsScreen extends ConsumerWidget {
   }
 }
 
-// ── Product List ──────────────────────────────────────────────────────────────
+// Shows FAB only on tab 0 (Articles), hides on Catalogue tab
+class _FabForTab extends StatefulWidget {
+  final VoidCallback onAdd;
+  const _FabForTab({required this.onAdd});
+
+  @override
+  State<_FabForTab> createState() => _FabForTabState();
+}
+
+class _FabForTabState extends State<_FabForTab> {
+  @override
+  Widget build(BuildContext context) {
+    final tab = DefaultTabController.of(context);
+    return AnimatedBuilder(
+      animation: tab,
+      builder: (_, __) => tab.index == 0
+          ? FloatingActionButton.extended(
+              onPressed: widget.onAdd,
+              icon: const Icon(Icons.add),
+              label: const Text('Nouvel article'),
+              backgroundColor: kPrimary,
+              foregroundColor: Colors.white,
+            )
+          : const SizedBox.shrink(),
+    );
+  }
+}
+
+// ── Tab 0 : Articles list ─────────────────────────────────────────────────────
+
+class _ArticlesTab extends ConsumerWidget {
+  final VoidCallback onAdd;
+  const _ArticlesTab({required this.onAdd});
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ref.watch(_productsProvider).when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _ErrorRetry(
+        error: e.toString(),
+        onRetry: () => ref.invalidate(_productsProvider),
+      ),
+      data: (products) => products.isEmpty
+          ? const Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.inventory_2_outlined, size: 64, color: kTextSecondary),
+                  SizedBox(height: 12),
+                  Text('Aucun article', style: TextStyle(fontSize: 16, color: kTextSecondary)),
+                  SizedBox(height: 4),
+                  Text('Appuyez sur + pour ajouter votre premier article',
+                      style: TextStyle(fontSize: 13, color: kTextSecondary)),
+                ],
+              ),
+            )
+          : _ProductsList(products: products.cast<Map<String, dynamic>>()),
+    );
+  }
+}
+
+// ── Tab 1 : Catalogue prix ────────────────────────────────────────────────────
+
+class _CatalogueTab extends ConsumerStatefulWidget {
+  const _CatalogueTab();
+
+  @override
+  ConsumerState<_CatalogueTab> createState() => _CatalogueTabState();
+}
+
+class _CatalogueTabState extends ConsumerState<_CatalogueTab>
+    with AutomaticKeepAliveClientMixin {
+  String _query = '';
+  String? _selectedCatId; // null = Tout
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    final productsAsync = ref.watch(_productsProvider);
+    final categoriesAsync = ref.watch(_categoriesProvider);
+
+    return productsAsync.when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _ErrorRetry(
+        error: e.toString(),
+        onRetry: () => ref.invalidate(_productsProvider),
+      ),
+      data: (rawProducts) {
+        final products = rawProducts.cast<Map<String, dynamic>>();
+        final categories =
+            categoriesAsync.valueOrNull?.cast<Map<String, dynamic>>() ?? [];
+
+        // Apply search
+        final q = _query.toLowerCase();
+        final filtered = q.isEmpty
+            ? products
+            : products.where((p) {
+                final name = (p['name'] as String? ?? '').toLowerCase();
+                final brand = (p['brand'] as String? ?? '').toLowerCase();
+                final cat = ((p['category'] as Map?)?['name'] as String? ?? '')
+                    .toLowerCase();
+                return name.contains(q) || brand.contains(q) || cat.contains(q);
+              }).toList();
+
+        // Apply category filter
+        final displayed = _selectedCatId == null
+            ? filtered
+            : filtered
+                .where((p) =>
+                    (p['category'] as Map?)?['id'] == _selectedCatId)
+                .toList();
+
+        // Group by category
+        final groups = <String, List<Map<String, dynamic>>>{};
+        final groupNames = <String, String>{};
+        for (final p in displayed) {
+          final cat = p['category'] as Map?;
+          final catId = cat?['id'] as String? ?? '__none__';
+          final catName = cat?['name'] as String? ?? 'Sans catégorie';
+          groups.putIfAbsent(catId, () => []).add(p);
+          groupNames[catId] = catName;
+        }
+        // Sort groups: named categories alphabetically, then uncategorised last
+        final sortedGroupIds = groups.keys.toList()
+          ..sort((a, b) {
+            if (a == '__none__') return 1;
+            if (b == '__none__') return -1;
+            return (groupNames[a] ?? '').compareTo(groupNames[b] ?? '');
+          });
+
+        return Column(
+          children: [
+            // Search
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+              child: TextField(
+                decoration: const InputDecoration(
+                  prefixIcon: Icon(Icons.search),
+                  hintText: 'Rechercher (fer, PVC, ciment…)',
+                ),
+                onChanged: (v) => setState(() => _query = v),
+              ),
+            ),
+
+            // Category filter chips
+            if (categories.isNotEmpty)
+              SizedBox(
+                height: 44,
+                child: ListView(
+                  padding: const EdgeInsets.symmetric(horizontal: 12),
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    _CatChip(
+                      label: 'Tout',
+                      selected: _selectedCatId == null,
+                      onTap: () => setState(() => _selectedCatId = null),
+                    ),
+                    ...categories.map((c) => _CatChip(
+                          label: c['name'] as String,
+                          selected: _selectedCatId == c['id'],
+                          onTap: () => setState(
+                              () => _selectedCatId = c['id'] as String),
+                        )),
+                  ],
+                ),
+              ),
+
+            const Divider(height: 1),
+
+            // Product groups
+            Expanded(
+              child: displayed.isEmpty
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.search_off,
+                              size: 48, color: kTextSecondary),
+                          const SizedBox(height: 8),
+                          Text(
+                            _query.isNotEmpty
+                                ? 'Aucun résultat pour "$_query"'
+                                : 'Aucun article dans cette catégorie',
+                            style: const TextStyle(color: kTextSecondary),
+                          ),
+                        ],
+                      ),
+                    )
+                  : ListView.builder(
+                      itemCount: sortedGroupIds.length,
+                      itemBuilder: (_, gi) {
+                        final catId = sortedGroupIds[gi];
+                        final catName = groupNames[catId] ?? 'Sans catégorie';
+                        final catProducts = groups[catId]!
+                          ..sort((a, b) => (a['name'] as String? ?? '')
+                              .compareTo(b['name'] as String? ?? ''));
+
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            // Category header
+                            Container(
+                              width: double.infinity,
+                              color: kPrimary.withValues(alpha: 0.07),
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 16, vertical: 8),
+                              child: Text(
+                                catName.toUpperCase(),
+                                style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: kPrimary,
+                                    letterSpacing: 0.8),
+                              ),
+                            ),
+                            // Products in this category
+                            ...catProducts.map((p) =>
+                                _CatalogueProductRow(product: p)),
+                          ],
+                        );
+                      },
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _CatChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _CatChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8, top: 6, bottom: 6),
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+          decoration: BoxDecoration(
+            color: selected ? kPrimary : Colors.white,
+            border: Border.all(
+                color: selected ? kPrimary : Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : kTextSecondary,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CatalogueProductRow extends StatelessWidget {
+  final Map<String, dynamic> product;
+  const _CatalogueProductRow({required this.product});
+
+  @override
+  Widget build(BuildContext context) {
+    final units = (product['units'] as List?)?.cast<Map>() ?? [];
+    final base =
+        units.where((u) => u['isBase'] == true).firstOrNull ??
+        (units.isNotEmpty ? units.first : null);
+    final bulk = units.where((u) => u['isBase'] != true).toList();
+
+    final baseName = base?['name'] as String? ?? 'u';
+    final retailPrice = base?['retailPrice'] as int? ?? 0;
+    final purchasePrice = base?['purchasePrice'] as int? ?? 0;
+
+    final stockLevels =
+        (product['stockLevels'] as List?)?.cast<Map>() ?? [];
+    final totalQty =
+        stockLevels.fold<int>(0, (s, l) => s + (l['cachedQty'] as int? ?? 0));
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Product name + stock badge
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: Text(
+                      product['name'] as String? ?? '',
+                      style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 15),
+                    ),
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: totalQty > 0
+                          ? kSuccess.withValues(alpha: 0.12)
+                          : kDanger.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                      '$totalQty $baseName en stock',
+                      style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                          color: totalQty > 0 ? kSuccess : kDanger),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+
+              // Base unit price row
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  _PriceTag(
+                    icon: Icons.sell_outlined,
+                    label: '1 $baseName',
+                    price: retailPrice,
+                    color: kPrimary,
+                  ),
+                  if (purchasePrice > 0 && purchasePrice != retailPrice)
+                    _PriceTag(
+                      icon: Icons.shopping_cart_outlined,
+                      label: 'Achat',
+                      price: purchasePrice,
+                      color: kTextSecondary,
+                      small: true,
+                    ),
+                ],
+              ),
+
+              // Bulk conditioning rows
+              if (bulk.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                ...bulk.map((u) {
+                  final factor = u['factor'] as int? ?? 1;
+                  final name = u['name'] as String? ?? '';
+                  final uSell = u['retailPrice'] as int? ?? 0;
+                  final uBuy = u['purchasePrice'] as int? ?? 0;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(children: [
+                      const Icon(Icons.subdirectory_arrow_right,
+                          size: 14, color: kTextSecondary),
+                      const SizedBox(width: 4),
+                      Text(
+                        '$name ($factor $baseName)',
+                        style: const TextStyle(
+                            fontSize: 12,
+                            color: kTextSecondary,
+                            fontWeight: FontWeight.w600),
+                      ),
+                      const Spacer(),
+                      if (uBuy > 0 && uBuy != uSell)
+                        Text(
+                          '${formatFcfa(uBuy)}  →  ',
+                          style: const TextStyle(
+                              fontSize: 11,
+                              color: kTextSecondary,
+                              decoration: TextDecoration.lineThrough),
+                        ),
+                      Text(
+                        formatFcfa(uSell),
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: kSuccess),
+                      ),
+                    ]),
+                  );
+                }),
+              ],
+            ],
+          ),
+        ),
+        const Divider(height: 1, indent: 16),
+      ],
+    );
+  }
+}
+
+class _PriceTag extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final int price;
+  final Color color;
+  final bool small;
+  const _PriceTag({
+    required this.icon,
+    required this.label,
+    required this.price,
+    required this.color,
+    this.small = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(icon, size: small ? 12 : 14, color: color),
+        const SizedBox(width: 4),
+        Text(
+          '$label : ${formatFcfa(price)}',
+          style: TextStyle(
+              fontSize: small ? 11 : 13,
+              fontWeight: FontWeight.w700,
+              color: color),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Product List (Articles tab) ───────────────────────────────────────────────
 
 class _ProductsList extends ConsumerStatefulWidget {
   final List<Map<String, dynamic>> products;
@@ -144,7 +568,9 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
         title: const Text('Supprimer l\'article'),
         content: Text('Supprimer "${p['name']}" ?\nCette action est irréversible.'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(dctx, false), child: const Text('Annuler')),
+          TextButton(
+              onPressed: () => Navigator.pop(dctx, false),
+              child: const Text('Annuler')),
           TextButton(
             onPressed: () => Navigator.pop(dctx, true),
             child: const Text('Supprimer', style: TextStyle(color: kDanger)),
@@ -187,13 +613,17 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
             itemCount: filtered.length,
             itemBuilder: (_, i) {
               final p = filtered[i];
-              final units = (p['units'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-              final baseUnit = units.where((u) => u['isBase'] == true).firstOrNull;
-              final bulkCount = units.where((u) => u['isBase'] != true).length;
+              final units =
+                  (p['units'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+              final baseUnit =
+                  units.where((u) => u['isBase'] == true).firstOrNull;
+              final bulkCount =
+                  units.where((u) => u['isBase'] != true).length;
               final stockLevels =
-                  (p['stockLevels'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-              final totalQty =
-                  stockLevels.fold<int>(0, (s, l) => s + (l['cachedQty'] as int? ?? 0));
+                  (p['stockLevels'] as List?)?.cast<Map<String, dynamic>>() ??
+                      [];
+              final totalQty = stockLevels.fold<int>(
+                  0, (s, l) => s + (l['cachedQty'] as int? ?? 0));
               final cat = p['category'] as Map? ?? {};
 
               return ListTile(
@@ -231,12 +661,14 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
                         if (baseUnit != null)
                           Text(
                             formatFcfa(baseUnit['retailPrice'] as int? ?? 0),
-                            style: const TextStyle(fontSize: 11, color: kTextSecondary),
+                            style: const TextStyle(
+                                fontSize: 11, color: kTextSecondary),
                           ),
                       ],
                     ),
                     PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert, size: 20, color: kTextSecondary),
+                      icon: const Icon(Icons.more_vert,
+                          size: 20, color: kTextSecondary),
                       onSelected: (action) {
                         if (action == 'edit') _editProduct(context, p);
                         if (action == 'delete') _deleteProduct(context, p);
@@ -255,7 +687,8 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
                           value: 'delete',
                           child: ListTile(
                             leading: Icon(Icons.delete_outline, color: kDanger),
-                            title: Text('Supprimer', style: TextStyle(color: kDanger)),
+                            title: Text('Supprimer',
+                                style: TextStyle(color: kDanger)),
                             contentPadding: EdgeInsets.zero,
                             dense: true,
                           ),
@@ -273,17 +706,11 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
   }
 }
 
-// ── Bulk conditioning entry (Tonne, Lot de 10, etc.) ─────────────────────────
-//
-// One row in the "Conditionnements en gros" section.
-// - qtyCtrl : how many base units make up this lot (e.g. 400 for 1 Tonne of 6mm bars)
-// - buyCtrl : purchase cost for this lot from supplier
-// - sellCtrl: selling price for this lot to customer
+// ── Bulk conditioning entry ───────────────────────────────────────────────────
 
 class _BulkEntry {
-  String? id;   // existing ProductUnit id (edit mode)
-  String? name; // e.g. "Tonne", "Lot de 10"
-
+  String? id;
+  String? name;
   final TextEditingController qtyCtrl;
   final TextEditingController buyCtrl;
   final TextEditingController sellCtrl;
@@ -339,7 +766,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
 
   List<Map<String, dynamic>> _localCategories = [];
   List<Map<String, dynamic>> _localUnits = [];
-  List<_BulkEntry> _bulkEntries = [];
+  final List<_BulkEntry> _bulkEntries = [];
 
   bool _loading = false;
   String? _error;
@@ -347,7 +774,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   static const _kNewUnit = '__new__';
   static const _kNewCat = '__new_cat__';
 
-  // Common bulk conditioning names for quick-add chips
   static const _kCommonBulk = [
     'Tonne',
     'Lot de 10',
@@ -377,7 +803,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
         _baseUnitName = base['name'] as String?;
         _baseAchatCtrl.text = (base['purchasePrice'] as int? ?? 0).toString();
         _baseVenteCtrl.text = (base['retailPrice'] as int? ?? 0).toString();
-        // Ensure the base unit name is in the local list
         if (_baseUnitName != null &&
             !_localUnits.any((u) => u['name'] == _baseUnitName)) {
           _localUnits = [..._localUnits, {'id': _baseUnitName, 'name': _baseUnitName}];
@@ -412,8 +837,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     super.dispose();
   }
 
-  // ── Dialogs ────────────────────────────────────────────────────────────────
-
   Future<String?> _askName(String title, String hint) async {
     final ctrl = TextEditingController();
     return showDialog<String>(
@@ -439,7 +862,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   }
 
   Future<void> _promptNewBaseUnit() async {
-    final name = await _askName('Nouvelle unité', 'ex: Barre, Sac, Tube, Plaque…');
+    final name =
+        await _askName('Nouvelle unité', 'ex: Barre, Sac, Tube, Plaque…');
     if (name == null || name.isEmpty) return;
     try {
       final res = await _api.post(Api.units, data: {'name': name});
@@ -459,8 +883,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   }
 
   Future<void> _promptNewCategory() async {
-    final name = await _askName('Nouvelle catégorie',
-        'ex: Barres de fer, Tubes PVC, Ciment, Tôles…');
+    final name = await _askName(
+        'Nouvelle catégorie', 'ex: Barres de fer, Tubes PVC, Ciment…');
     if (name == null || name.isEmpty) return;
     try {
       final res =
@@ -484,8 +908,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     });
   }
 
-  // ── Submit ─────────────────────────────────────────────────────────────────
-
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
     if (_baseUnitName == null || _baseUnitName!.isEmpty) {
@@ -505,14 +927,9 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       }
     }
 
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-
+    setState(() { _loading = true; _error = null; });
     try {
       const uuid = Uuid();
-
       final units = <Map<String, dynamic>>[
         {
           'id': _baseUnitId ?? uuid.v4(),
@@ -555,25 +972,19 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
       final msg = e.toString();
-      String label;
-      if (msg.contains('400')) {
-        label = 'Données invalides';
-      } else if (msg.contains('409')) {
-        label = 'Cet article existe déjà';
-      } else if (msg.contains('500')) {
-        label = 'Erreur serveur — réessayez';
-      } else if (msg.contains('timeout') || msg.contains('SocketException')) {
-        label = 'Serveur en démarrage, réessayez…';
-      } else {
-        label = 'Erreur: $msg';
-      }
-      setState(() => _error = label);
+      setState(() => _error = msg.contains('400')
+          ? 'Données invalides'
+          : msg.contains('409')
+              ? 'Cet article existe déjà'
+              : msg.contains('500')
+                  ? 'Erreur serveur'
+                  : msg.contains('timeout') || msg.contains('Socket')
+                      ? 'Serveur en démarrage, réessayez…'
+                      : 'Erreur: $msg');
     } finally {
       if (mounted) setState(() => _loading = false);
     }
   }
-
-  // ── Bulk row widget ────────────────────────────────────────────────────────
 
   Widget _buildBulkRow(int idx) {
     final e = _bulkEntries[idx];
@@ -590,7 +1001,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Row header: name dropdown + remove button
           Row(children: [
             Expanded(
               child: DropdownButtonFormField<String>(
@@ -619,9 +1029,9 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                 onChanged: (v) {
                   if (v == _kNewUnit) {
                     WidgetsBinding.instance.addPostFrameCallback((_) async {
-                      final name =
-                          await _askName('Nouveau conditionnement',
-                              'ex: Palette, Caisse, Rouleau…');
+                      final name = await _askName(
+                          'Nouveau conditionnement',
+                          'ex: Palette, Caisse, Rouleau…');
                       if (name == null || name.isEmpty) return;
                       setState(() {
                         if (!_localUnits.any((u) => u['name'] == name)) {
@@ -647,10 +1057,9 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             ),
           ]),
           const SizedBox(height: 10),
-
-          // Qty per lot
           Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
-            const Text('1 lot = ', style: TextStyle(color: kTextSecondary, fontSize: 13)),
+            const Text('1 lot = ',
+                style: TextStyle(color: kTextSecondary, fontSize: 13)),
             SizedBox(
               width: 72,
               child: TextFormField(
@@ -667,12 +1076,11 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             Padding(
               padding: const EdgeInsets.only(left: 6),
               child: Text(baseName,
-                  style: const TextStyle(color: kTextSecondary, fontSize: 13)),
+                  style: const TextStyle(
+                      color: kTextSecondary, fontSize: 13)),
             ),
           ]),
           const SizedBox(height: 8),
-
-          // Prices for this lot
           Row(children: [
             Expanded(
               child: TextFormField(
@@ -700,8 +1108,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               ),
             ),
           ]),
-
-          // Live unit price hint
           if (e.sellCtrl.text.isNotEmpty &&
               (int.tryParse(e.qtyCtrl.text) ?? 0) > 0)
             Padding(
@@ -724,8 +1130,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     );
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
-
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -746,7 +1150,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // Header
               Row(children: [
                 Expanded(
                   child: Text(
@@ -762,7 +1165,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               const Divider(),
               const SizedBox(height: 6),
 
-              // ── Informations ──────────────────────────────────────────────
               _sectionLabel('Informations'),
               const SizedBox(height: 8),
               TextFormField(
@@ -789,7 +1191,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                     labelText: 'Catégorie',
                     prefixIcon: Icon(Icons.category)),
                 items: [
-                  const DropdownMenuItem(value: null, child: Text('— Aucune —')),
+                  const DropdownMenuItem(
+                      value: null, child: Text('— Aucune —')),
                   ..._localCategories.map((c) => DropdownMenuItem(
                         value: c['id'] as String,
                         child: Text(c['name'] as String? ?? ''),
@@ -801,7 +1204,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                       SizedBox(width: 6),
                       Text('Nouvelle catégorie…',
                           style: TextStyle(
-                              color: kPrimary, fontWeight: FontWeight.w600)),
+                              color: kPrimary,
+                              fontWeight: FontWeight.w600)),
                     ]),
                   ),
                 ],
@@ -816,7 +1220,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               ),
               const SizedBox(height: 20),
 
-              // ── Vente à l'unité ───────────────────────────────────────────
               _sectionLabel('Vente à l\'unité'),
               const SizedBox(height: 4),
               const Text(
@@ -843,7 +1246,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                       SizedBox(width: 6),
                       Text('Nouvelle unité…',
                           style: TextStyle(
-                              color: kSuccess, fontWeight: FontWeight.w600)),
+                              color: kSuccess,
+                              fontWeight: FontWeight.w600)),
                     ]),
                   ),
                 ],
@@ -856,7 +1260,9 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                   }
                 },
                 validator: (v) =>
-                    (v == null || v.isEmpty || v == _kNewUnit) ? 'Requis' : null,
+                    (v == null || v.isEmpty || v == _kNewUnit)
+                        ? 'Requis'
+                        : null,
               ),
               const SizedBox(height: 10),
               Row(children: [
@@ -890,20 +1296,17 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               ]),
               const SizedBox(height: 22),
 
-              // ── Conditionnements en gros ──────────────────────────────────
               _sectionLabel('Conditionnements en gros (optionnel)'),
               const SizedBox(height: 4),
-              Text(
-                'Ajoutez les lots / tonnes / douzaines avec leur nombre d\'unités et leur prix spécial.',
-                style: const TextStyle(fontSize: 12, color: kTextSecondary),
+              const Text(
+                'Lots, tonnes, douzaines… avec nombre d\'unités et prix du lot.',
+                style: TextStyle(fontSize: 12, color: kTextSecondary),
               ),
               const SizedBox(height: 10),
 
-              // Existing bulk rows
               for (int i = 0; i < _bulkEntries.length; i++)
                 _buildBulkRow(i),
 
-              // Quick-add chips
               Wrap(
                 spacing: 8,
                 runSpacing: 6,
@@ -940,7 +1343,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
 
               if (_error != null) ...[
                 const SizedBox(height: 10),
-                Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
+                Text(_error!,
+                    style: const TextStyle(color: kDanger, fontSize: 13)),
               ],
               const SizedBox(height: 20),
               SizedBox(
@@ -990,7 +1394,7 @@ class _ErrorRetry extends StatelessWidget {
         children: [
           const Icon(Icons.wifi_off, size: 48, color: kTextSecondary),
           const SizedBox(height: 12),
-          const Text('Impossible de charger les articles',
+          const Text('Impossible de charger',
               style: TextStyle(color: kTextSecondary)),
           const SizedBox(height: 8),
           Text(error,
@@ -1075,7 +1479,9 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
         title: const Text('Supprimer l\'unité'),
         content: Text('Supprimer "$name" ?'),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Annuler')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
             child: const Text('Supprimer', style: TextStyle(color: kDanger)),
@@ -1115,7 +1521,8 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
             child: Row(children: [
               const Expanded(
                 child: Text('Gérer les unités de base',
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                    style: TextStyle(
+                        fontSize: 18, fontWeight: FontWeight.w800)),
               ),
               IconButton(
                   onPressed: () => Navigator.pop(context),
@@ -1168,7 +1575,8 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
                       )
                     : ListView.separated(
                         itemCount: _units.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1),
+                        separatorBuilder: (_, __) =>
+                            const Divider(height: 1),
                         itemBuilder: (_, i) {
                           final u = _units[i];
                           return ListTile(
@@ -1182,11 +1590,14 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
                                   color: kPrimary, size: 18),
                             ),
                             title: Text(u['name'] as String,
-                                style: const TextStyle(fontWeight: FontWeight.w600)),
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600)),
                             trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline, color: kDanger),
-                              onPressed: () =>
-                                  _delete(u['id'] as String, u['name'] as String),
+                              icon: const Icon(Icons.delete_outline,
+                                  color: kDanger),
+                              onPressed: () => _delete(
+                                  u['id'] as String,
+                                  u['name'] as String),
                             ),
                           );
                         },
