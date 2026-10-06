@@ -13,6 +13,28 @@ final _stockProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
 
 final _apiProv = Provider<ApiClient>((ref) => ApiClient());
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/// Returns a list of "X UnitName" strings for every non-base unit
+/// whose whole-unit count is ≥ 1 or whose remainder matters.
+List<String> _unitBreakdown(int qtyBase, List<Map> units) {
+  final nonBase = units.where((u) => u['isBase'] != true && (u['factor'] as int? ?? 0) > 1).toList();
+  final out = <String>[];
+  for (final u in nonBase) {
+    final factor = u['factor'] as int? ?? 1;
+    final whole = qtyBase ~/ factor;
+    final rem = qtyBase % factor;
+    final name = u['name'] as String? ?? '';
+    if (whole > 0 && rem == 0) {
+      out.add('$whole $name');
+    } else if (whole > 0) {
+      out.add('$whole $name + $rem');
+    }
+    // if whole == 0, skip
+  }
+  return out;
+}
+
 class StockScreen extends ConsumerWidget {
   const StockScreen({super.key});
 
@@ -74,21 +96,19 @@ class StockScreen extends ConsumerWidget {
               ...low.map((i) {
                 final prod = i['product'] as Map? ?? {};
                 final units = (prod['units'] as List?)?.cast<Map>() ?? [];
-                final base = units.where((u) => u['isBase'] == true).firstOrNull ?? (units.isNotEmpty ? units.first : null);
+                final base = units.where((u) => u['isBase'] == true).firstOrNull
+                    ?? (units.isNotEmpty ? units.first : null);
                 final isOut = i['isOutOfStock'] as bool? ?? false;
+                final qty = i['cachedQty'] as int? ?? 0;
                 return ListTile(
-                  leading: Icon(
-                    isOut ? Icons.close : Icons.warning_amber,
-                    color: isOut ? kDanger : kWarning,
-                  ),
+                  leading: Icon(isOut ? Icons.close : Icons.warning_amber,
+                      color: isOut ? kDanger : kWarning),
                   title: Text(prod['name'] as String? ?? ''),
                   subtitle: Text(prod['brand'] as String? ?? ''),
                   trailing: Text(
-                    '${i['cachedQty']} ${base?['name'] ?? 'u'}',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w700,
-                      color: isOut ? kDanger : kWarning,
-                    ),
+                    '$qty ${base?['name'] ?? 'u'}',
+                    style: TextStyle(fontWeight: FontWeight.w700,
+                        color: isOut ? kDanger : kWarning),
                   ),
                 );
               }),
@@ -98,6 +118,8 @@ class StockScreen extends ConsumerWidget {
     });
   }
 }
+
+// ── Stock List ────────────────────────────────────────────────────────────────
 
 class _StockList extends ConsumerStatefulWidget {
   final List<Map<String, dynamic>> items;
@@ -152,7 +174,8 @@ class _StockListState extends ConsumerState<_StockList> {
               final prod = item['product'] as Map? ?? {};
               final cat = prod['category'] as Map? ?? {};
               final units = (prod['units'] as List?)?.cast<Map>() ?? [];
-              final base = units.where((u) => u['isBase'] == true).firstOrNull ?? (units.isNotEmpty ? units.first : null);
+              final base = units.where((u) => u['isBase'] == true).firstOrNull
+                  ?? (units.isNotEmpty ? units.first : null);
 
               final qty = item['cachedQty'] as int? ?? 0;
               final isLow = item['isLowStock'] as bool? ?? false;
@@ -166,11 +189,14 @@ class _StockListState extends ConsumerState<_StockList> {
               final purchasePrice = base?['purchasePrice'] as int? ?? 0;
               final costValue = qty * purchasePrice;
 
+              final breakdown = _unitBreakdown(qty, units);
+
               return ListTile(
                 onTap: () => _openAdjust(context, item),
                 contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                 leading: Container(
-                  width: 8, height: 44,
+                  width: 8,
+                  height: 44,
                   decoration: BoxDecoration(
                     color: statusColor,
                     borderRadius: BorderRadius.circular(4),
@@ -178,18 +204,40 @@ class _StockListState extends ConsumerState<_StockList> {
                 ),
                 title: Text(prod['name'] as String? ?? '',
                     style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Text([
-                  if (cat['name'] != null) cat['name'] as String,
-                  if (prod['brand'] != null) prod['brand'] as String,
-                ].join(' · '), style: const TextStyle(fontSize: 12)),
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if ((cat['name'] ?? prod['brand']) != null)
+                      Text(
+                        [
+                          if (cat['name'] != null) cat['name'] as String,
+                          if (prod['brand'] != null) prod['brand'] as String,
+                        ].join(' · '),
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    if (breakdown.isNotEmpty)
+                      Text(
+                        '≈ ${breakdown.join(' · ')}',
+                        style: const TextStyle(fontSize: 11, color: kTextSecondary),
+                      ),
+                  ],
+                ),
+                isThreeLine: breakdown.isNotEmpty,
                 trailing: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
-                    Text('$qty ${base?['name'] ?? 'u'}',
-                        style: TextStyle(fontWeight: FontWeight.w800, fontSize: 14, color: statusColor)),
-                    Text(formatFcfa(costValue),
-                        style: const TextStyle(fontSize: 11, color: kTextSecondary)),
+                    Text(
+                      '$qty ${base?['name'] ?? 'u'}',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 14,
+                          color: statusColor),
+                    ),
+                    Text(
+                      formatFcfa(costValue),
+                      style: const TextStyle(fontSize: 11, color: kTextSecondary),
+                    ),
                   ],
                 ),
               );
@@ -219,6 +267,19 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
   bool _loading = false;
   String? _error;
 
+  // Selected unit for qty entry (defaults to base unit)
+  Map? _selectedUnit;
+  List<Map> _units = [];
+
+  @override
+  void initState() {
+    super.initState();
+    final prod = widget.item['product'] as Map? ?? {};
+    _units = (prod['units'] as List?)?.cast<Map>() ?? [];
+    _selectedUnit = _units.where((u) => u['isBase'] == true).firstOrNull
+        ?? (_units.isNotEmpty ? _units.first : null);
+  }
+
   @override
   void dispose() {
     _qtyCtrl.dispose();
@@ -226,9 +287,17 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
     super.dispose();
   }
 
+  int get _factor => (_selectedUnit?['factor'] as int? ?? 1);
+
+  /// Qty entered by user, converted to base units
+  int get _deltaInBase {
+    final entered = int.tryParse(_qtyCtrl.text.trim()) ?? 0;
+    return entered * _factor;
+  }
+
   Future<void> _submit() async {
-    final qty = int.tryParse(_qtyCtrl.text.trim());
-    if (qty == null || qty <= 0) {
+    final entered = int.tryParse(_qtyCtrl.text.trim());
+    if (entered == null || entered <= 0) {
       setState(() => _error = 'Entrez une quantité valide (> 0)');
       return;
     }
@@ -245,14 +314,14 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
 
     setState(() { _loading = true; _error = null; });
     try {
-      final delta = _isEntry ? qty : -qty;
+      final deltaBase = _isEntry ? _deltaInBase : -_deltaInBase;
       final reason = _reasonCtrl.text.trim().isNotEmpty
           ? _reasonCtrl.text.trim()
           : (_isEntry ? 'Entrée stock manuelle' : 'Sortie stock manuelle');
       await _api.post('${Api.stock}/adjustment', data: {
         'depotId': depotId,
         'productId': productId,
-        'qtyInBase': delta,
+        'qtyInBase': deltaBase,
         'reason': reason,
       });
       if (mounted) Navigator.pop(context, true);
@@ -264,16 +333,54 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
     }
   }
 
+  Widget _buildQtyColumn(String label, int qtyBase, {bool highlight = false}) {
+    final base = _units.where((u) => u['isBase'] == true).firstOrNull
+        ?? (_units.isNotEmpty ? _units.first : null);
+    final baseName = base?['name'] as String? ?? 'u';
+
+    final color = qtyBase > 0 ? kSuccess : (qtyBase < 0 ? kDanger : Colors.grey.shade400);
+
+    return Expanded(
+      child: Column(
+        children: [
+          Text(label,
+              style: const TextStyle(fontSize: 11, color: kTextSecondary, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 4),
+          // Base unit qty (large)
+          Text(
+            highlight && _deltaInBase == 0 ? '—' : '$qtyBase',
+            style: TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: color),
+          ),
+          Text(baseName, style: const TextStyle(fontSize: 11, color: kTextSecondary)),
+          // Non-base equivalents
+          ..._units.where((u) => u['isBase'] != true && (u['factor'] as int? ?? 0) > 1).map((u) {
+            final factor = u['factor'] as int? ?? 1;
+            final whole = qtyBase ~/ factor;
+            final rem = qtyBase % factor;
+            final name = u['name'] as String? ?? '';
+            final str = whole > 0 && rem == 0
+                ? '$whole $name'
+                : whole > 0
+                    ? '$whole $name + $rem'
+                    : '0 $name';
+            return Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(str,
+                  style: const TextStyle(fontSize: 12, color: kTextSecondary)),
+            );
+          }),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final prod = widget.item['product'] as Map? ?? {};
-    final units = (prod['units'] as List?)?.cast<Map>() ?? [];
-    final base = units.where((u) => u['isBase'] == true).firstOrNull ?? (units.isNotEmpty ? units.first : null);
     final currentQty = widget.item['cachedQty'] as int? ?? 0;
-    final unitName = base?['name'] as String? ?? 'u';
+    final selectedName = _selectedUnit?['name'] as String? ?? 'u';
 
-    final delta = int.tryParse(_qtyCtrl.text.trim()) ?? 0;
-    final newQty = _isEntry ? currentQty + delta : currentQty - delta;
+    final newQty = _isEntry ? currentQty + _deltaInBase : currentQty - _deltaInBase;
 
     return Container(
       decoration: const BoxDecoration(
@@ -284,155 +391,186 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
         bottom: MediaQuery.of(context).viewInsets.bottom + 24,
         left: 20, right: 20, top: 20,
       ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(children: [
-            Expanded(
-              child: Text(prod['name'] as String? ?? '',
-                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-            ),
-            IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
-          ]),
-          const SizedBox(height: 8),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Expanded(
+                child: Text(prod['name'] as String? ?? '',
+                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
+              ),
+              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+            ]),
+            const SizedBox(height: 8),
 
-          // Current → New stock preview card
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade50,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: Colors.grey.shade200),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                Column(children: [
-                  const Text('Actuel', style: TextStyle(fontSize: 11, color: kTextSecondary)),
-                  const SizedBox(height: 2),
-                  Text('$currentQty',
-                      style: TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.w900,
-                        color: currentQty > 0 ? kSuccess : kDanger,
-                      )),
-                  Text(unitName, style: const TextStyle(fontSize: 12, color: kTextSecondary)),
-                ]),
-                Icon(Icons.arrow_forward,
-                    color: delta > 0 ? (_isEntry ? kSuccess : kDanger) : Colors.grey.shade400),
-                Column(children: [
-                  const Text('Après', style: TextStyle(fontSize: 11, color: kTextSecondary)),
-                  const SizedBox(height: 2),
-                  Text(delta > 0 ? '$newQty' : '—',
-                      style: TextStyle(
-                        fontSize: 28, fontWeight: FontWeight.w900,
-                        color: delta == 0
-                            ? Colors.grey.shade400
-                            : (newQty > 0 ? kSuccess : kDanger),
-                      )),
-                  Text(unitName, style: const TextStyle(fontSize: 12, color: kTextSecondary)),
-                ]),
-              ],
-            ),
-          ),
-          const SizedBox(height: 14),
-
-          // Entry / Exit toggle
-          Row(children: [
-            Expanded(
-              child: GestureDetector(
-                onTap: () => setState(() => _isEntry = true),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  decoration: BoxDecoration(
-                    color: _isEntry ? kSuccess : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(10),
+            // ── Multi-unit preview card ─────────────────────────────────────
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade50,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.grey.shade200),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  _buildQtyColumn('ACTUEL', currentQty),
+                  Padding(
+                    padding: const EdgeInsets.only(top: 30),
+                    child: Icon(
+                      Icons.arrow_forward,
+                      color: _deltaInBase > 0
+                          ? (_isEntry ? kSuccess : kDanger)
+                          : Colors.grey.shade400,
+                    ),
                   ),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.add_circle_outline,
-                        color: _isEntry ? Colors.white : kTextSecondary, size: 18),
-                    const SizedBox(width: 6),
-                    Text('Entrée', style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: _isEntry ? Colors.white : kTextSecondary)),
-                  ]),
+                  _buildQtyColumn('APRÈS', newQty, highlight: true),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+
+            // ── Entry / Exit toggle ─────────────────────────────────────────
+            Row(children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _isEntry = true),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: _isEntry ? kSuccess : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.add_circle_outline,
+                          color: _isEntry ? Colors.white : kTextSecondary, size: 18),
+                      const SizedBox(width: 6),
+                      Text('Entrée', style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: _isEntry ? Colors.white : kTextSecondary)),
+                    ]),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: GestureDetector(
-                onTap: () => setState(() => _isEntry = false),
-                child: AnimatedContainer(
-                  duration: const Duration(milliseconds: 150),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  decoration: BoxDecoration(
-                    color: !_isEntry ? kDanger : Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(10),
+              const SizedBox(width: 10),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => setState(() => _isEntry = false),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(
+                      color: !_isEntry ? kDanger : Colors.grey.shade100,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      Icon(Icons.remove_circle_outline,
+                          color: !_isEntry ? Colors.white : kTextSecondary, size: 18),
+                      const SizedBox(width: 6),
+                      Text('Sortie', style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          color: !_isEntry ? Colors.white : kTextSecondary)),
+                    ]),
                   ),
-                  child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    Icon(Icons.remove_circle_outline,
-                        color: !_isEntry ? Colors.white : kTextSecondary, size: 18),
-                    const SizedBox(width: 6),
-                    Text('Sortie', style: TextStyle(
-                        fontWeight: FontWeight.w700,
-                        color: !_isEntry ? Colors.white : kTextSecondary)),
-                  ]),
                 ),
               ),
-            ),
-          ]),
-          const SizedBox(height: 14),
+            ]),
+            const SizedBox(height: 14),
 
-          TextField(
-            controller: _qtyCtrl,
-            keyboardType: TextInputType.number,
-            autofocus: true,
-            onChanged: (_) => setState(() {}),
-            decoration: InputDecoration(
-              labelText: 'Quantité ($unitName) *',
-              prefixIcon: Icon(
-                _isEntry ? Icons.add : Icons.remove,
-                color: _isEntry ? kSuccess : kDanger,
+            // ── Unit selector (only shown when product has multiple units) ──
+            if (_units.length > 1) ...[
+              const Text('Saisir la quantité en :',
+                  style: TextStyle(fontSize: 12, color: kTextSecondary, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 8,
+                children: _units.map((u) {
+                  final isSelected = _selectedUnit?['id'] == u['id'];
+                  final uName = u['name'] as String? ?? '';
+                  final factor = u['factor'] as int? ?? 1;
+                  final base = _units.firstWhere((x) => x['isBase'] == true,
+                      orElse: () => _units.first);
+                  final baseName = base['name'] as String? ?? '';
+                  return ChoiceChip(
+                    label: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(uName, style: const TextStyle(fontWeight: FontWeight.w700)),
+                        if (u['isBase'] != true)
+                          Text('1 $uName = $factor $baseName',
+                              style: const TextStyle(fontSize: 10)),
+                      ],
+                    ),
+                    selected: isSelected,
+                    onSelected: (_) => setState(() {
+                      _selectedUnit = u;
+                      _qtyCtrl.clear();
+                    }),
+                    selectedColor: kPrimary,
+                    labelStyle: TextStyle(
+                        color: isSelected ? Colors.white : kTextSecondary),
+                  );
+                }).toList(),
               ),
-              suffixText: unitName,
-            ),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _reasonCtrl,
-            decoration: const InputDecoration(
-              labelText: 'Motif (optionnel)',
-              hintText: 'ex: Réception commande, Inventaire…',
-              prefixIcon: Icon(Icons.note_outlined),
-            ),
-            textCapitalization: TextCapitalization.sentences,
-          ),
+              const SizedBox(height: 10),
+            ],
 
-          if (_error != null) ...[
+            // ── Quantity field ──────────────────────────────────────────────
+            TextField(
+              controller: _qtyCtrl,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              onChanged: (_) => setState(() {}),
+              decoration: InputDecoration(
+                labelText: 'Quantité ($selectedName) *',
+                prefixIcon: Icon(
+                  _isEntry ? Icons.add : Icons.remove,
+                  color: _isEntry ? kSuccess : kDanger,
+                ),
+                suffixText: selectedName,
+                helperText: _factor > 1
+                    ? '1 $selectedName = $_factor ${(_units.firstWhere((u) => u['isBase'] == true, orElse: () => _units.first))['name']}'
+                    : null,
+              ),
+            ),
             const SizedBox(height: 10),
-            Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
-          ],
-          const SizedBox(height: 20),
-          SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              style: FilledButton.styleFrom(
-                backgroundColor: _isEntry ? kSuccess : kDanger,
+            TextField(
+              controller: _reasonCtrl,
+              decoration: const InputDecoration(
+                labelText: 'Motif (optionnel)',
+                hintText: 'ex: Réception commande, Inventaire…',
+                prefixIcon: Icon(Icons.note_outlined),
               ),
-              onPressed: _loading ? null : _submit,
-              icon: _loading
-                  ? const SizedBox(width: 18, height: 18,
-                      child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                  : Icon(_isEntry ? Icons.add_circle_outline : Icons.remove_circle_outline),
-              label: Text(_loading
-                  ? 'Enregistrement…'
-                  : (_isEntry ? 'Valider l\'entrée' : 'Valider la sortie')),
+              textCapitalization: TextCapitalization.sentences,
             ),
-          ),
-        ],
+
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
+            ],
+            const SizedBox(height: 20),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                style: FilledButton.styleFrom(
+                  backgroundColor: _isEntry ? kSuccess : kDanger,
+                ),
+                onPressed: _loading ? null : _submit,
+                icon: _loading
+                    ? const SizedBox(width: 18, height: 18,
+                        child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Icon(_isEntry ? Icons.add_circle_outline : Icons.remove_circle_outline),
+                label: Text(_loading
+                    ? 'Enregistrement…'
+                    : (_isEntry ? 'Valider l\'entrée' : 'Valider la sortie')),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
