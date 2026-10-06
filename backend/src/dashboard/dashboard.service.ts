@@ -196,6 +196,47 @@ export class DashboardService {
     });
     const totalDebt = Math.max(0, (debtors._sum.amount ?? 0) - (repayments._sum.amount ?? 0));
 
+    // Top 8 products by revenue in period
+    const topProductLines = await this.prisma.saleLine.groupBy({
+      by: ['productId'],
+      where: {
+        businessId,
+        deleted: false,
+        sale: { status: SaleStatus.ACTIVE, deleted: false, createdAt: { gte, lte }, ...(depotId ? { depotId } : {}) },
+      },
+      _sum: { lineTotal: true, qty: true },
+      orderBy: { _sum: { lineTotal: 'desc' } },
+      take: 8,
+    });
+    const topProductIds = topProductLines.map((l) => l.productId);
+    const topProductDetails = await this.prisma.product.findMany({
+      where: { id: { in: topProductIds } },
+      select: { id: true, name: true, brand: true },
+    });
+    const topProductMap = Object.fromEntries(topProductDetails.map((p) => [p.id, p]));
+    const topProducts = topProductLines.map((l) => ({
+      productId: l.productId,
+      name: topProductMap[l.productId]?.name ?? '',
+      brand: topProductMap[l.productId]?.brand ?? '',
+      totalRevenue: l._sum.lineTotal ?? 0,
+      totalQty: l._sum.qty ?? 0,
+    }));
+
+    // Low stock alerts with product names (max 10)
+    const lowStockLevels = await this.prisma.productStockLevel.findMany({
+      where: {
+        businessId,
+        ...(depotId ? { depotId } : {}),
+        cachedQty: { lte: 5 },
+      },
+      include: { product: { select: { id: true, name: true, brand: true, archived: true } } },
+      orderBy: { cachedQty: 'asc' },
+      take: 10,
+    });
+    const stockAlerts = lowStockLevels
+      .filter((l) => !l.product.archived)
+      .map((l) => ({ productId: l.productId, name: l.product.name, brand: l.product.brand, qty: l.cachedQty, minLevel: l.minLevel }));
+
     return {
       period: { type: period, from: gte.toISOString(), to: lte.toISOString() },
       sales: {
@@ -230,6 +271,8 @@ export class DashboardService {
         payments: s.payments,
       })),
       sparkChart,
+      topProducts,
+      stockAlerts,
     };
   }
 }

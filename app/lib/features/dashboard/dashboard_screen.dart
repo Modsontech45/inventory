@@ -122,6 +122,11 @@ class _DashboardBody extends StatelessWidget {
     final recentSales = (data['recentSales'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final sparkChart = (data['sparkChart'] as List?)?.cast<Map<String, dynamic>>() ?? [];
     final byMethod = (sales['byPaymentMethod'] as Map<String, dynamic>?) ?? {};
+    final topProducts = (data['topProducts'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final stockAlerts = (data['stockAlerts'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+
+    final lowStockCount = stock['lowStockCount'] as int? ?? 0;
+    final negativeCount = stock['negativeStockCount'] as int? ?? 0;
 
     return ListView(
       padding: const EdgeInsets.all(12),
@@ -139,9 +144,42 @@ class _DashboardBody extends StatelessWidget {
         const SizedBox(height: 8),
         _KpiRow(children: [
           _KpiCard(label: 'Dépenses', value: formatFcfa(profit['expenses'] as int? ?? 0), icon: Icons.money_off, color: kDanger),
-          _KpiCard(label: 'Stock faible', value: '${stock['lowStockCount'] ?? 0}', icon: Icons.warning_amber, color: kWarning, sub: '${stock['negativeStockCount'] ?? 0} négatif(s)'),
+          _KpiCard(
+            label: 'Stock faible',
+            value: '$lowStockCount',
+            icon: Icons.warning_amber,
+            color: (lowStockCount + negativeCount) > 0 ? kDanger : kSuccess,
+            sub: negativeCount > 0 ? '$negativeCount négatif(s)' : 'Tout est ok',
+          ),
         ]),
         const SizedBox(height: 16),
+
+        // ── Stock alerts ──
+        if (stockAlerts.isNotEmpty) ...[
+          Row(children: [
+            const Expanded(child: _SectionTitle('Alertes stock')),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: kDanger.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text('${stockAlerts.length}',
+                  style: const TextStyle(color: kDanger, fontSize: 12, fontWeight: FontWeight.w800)),
+            ),
+          ]),
+          const SizedBox(height: 8),
+          _StockAlertsList(alerts: stockAlerts),
+          const SizedBox(height: 16),
+        ],
+
+        // ── Top products ──
+        if (topProducts.isNotEmpty) ...[
+          _SectionTitle('Meilleures ventes'),
+          const SizedBox(height: 8),
+          _TopProductsList(products: topProducts),
+          const SizedBox(height: 16),
+        ],
 
         // ── Spark chart ──
         if (sparkChart.isNotEmpty) ...[
@@ -471,6 +509,164 @@ class _RecentSaleCard extends StatelessWidget {
     } catch (_) {
       return '';
     }
+  }
+}
+
+// ── Stock alerts list ─────────────────────────────────────────────────────────
+
+class _StockAlertsList extends StatelessWidget {
+  final List<Map<String, dynamic>> alerts;
+  const _StockAlertsList({required this.alerts});
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Column(
+        children: alerts.asMap().entries.map((e) {
+          final i = e.key;
+          final a = e.value;
+          final qty = a['qty'] as int? ?? 0;
+          final minLevel = a['minLevel'] as int? ?? 0;
+          final isNegative = qty < 0;
+          final color = isNegative ? kDanger : kWarning;
+
+          return Column(
+            children: [
+              if (i > 0) const Divider(height: 1),
+              ListTile(
+                dense: true,
+                leading: CircleAvatar(
+                  radius: 16,
+                  backgroundColor: color.withValues(alpha: 0.1),
+                  child: Icon(
+                    isNegative ? Icons.remove_circle_outline : Icons.warning_amber,
+                    color: color,
+                    size: 16,
+                  ),
+                ),
+                title: Text(
+                  a['name'] as String? ?? '',
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
+                ),
+                subtitle: Text(
+                  minLevel > 0 ? 'Min: $minLevel' : 'Sans seuil min',
+                  style: const TextStyle(fontSize: 11),
+                ),
+                trailing: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: color.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    qty.toString(),
+                    style: TextStyle(
+                        color: color,
+                        fontWeight: FontWeight.w900,
+                        fontSize: 14),
+                  ),
+                ),
+              ),
+            ],
+          );
+        }).toList(),
+      ),
+    );
+  }
+}
+
+// ── Top products list ─────────────────────────────────────────────────────────
+
+class _TopProductsList extends StatelessWidget {
+  final List<Map<String, dynamic>> products;
+  const _TopProductsList({required this.products});
+
+  @override
+  Widget build(BuildContext context) {
+    final maxRevenue = products.isEmpty
+        ? 1.0
+        : products
+            .map((p) => (p['totalRevenue'] as int? ?? 0).toDouble())
+            .reduce((a, b) => a > b ? a : b);
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          children: products.asMap().entries.map((e) {
+            final i = e.key;
+            final p = e.value;
+            final revenue = (p['totalRevenue'] as int? ?? 0).toDouble();
+            final pct = maxRevenue > 0 ? revenue / maxRevenue : 0.0;
+            final qty = p['totalQty'] as int? ?? 0;
+
+            final barColor = i == 0
+                ? kPrimary
+                : i == 1
+                    ? kPrimaryLight
+                    : kPrimary.withValues(alpha: 0.5);
+
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 5),
+              child: Row(children: [
+                SizedBox(
+                  width: 26,
+                  child: Text(
+                    '${i + 1}',
+                    style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: i == 0 ? kPrimary : kTextSecondary),
+                  ),
+                ),
+                Expanded(
+                  flex: 5,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        p['name'] as String? ?? '',
+                        style: const TextStyle(
+                            fontSize: 12, fontWeight: FontWeight.w700),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      const SizedBox(height: 3),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(3),
+                        child: LinearProgressIndicator(
+                          value: pct,
+                          minHeight: 6,
+                          backgroundColor: Colors.grey.shade100,
+                          color: barColor,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Text(
+                      formatFcfaCompact(revenue.toInt()),
+                      style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w800,
+                          color: kPrimary),
+                    ),
+                    Text(
+                      '$qty vendus',
+                      style: const TextStyle(
+                          fontSize: 10, color: kTextSecondary),
+                    ),
+                  ],
+                ),
+              ]),
+            );
+          }).toList(),
+        ),
+      ),
+    );
   }
 }
 
