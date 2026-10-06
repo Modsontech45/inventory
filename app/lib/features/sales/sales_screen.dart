@@ -191,18 +191,18 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
             })
         .toList();
 
-    await api.post(Api.sales, data: {
-      'id': saleId,
-      if (customerId != null) 'customerId': customerId,
-      'discount': discount,
-      'lines': lines,
-      'payments': payments.entries
-          .where((e) => e.value > 0)
-          .map((e) => {'id': uuid.v4(), 'method': e.key, 'amount': e.value})
-          .toList(),
-      'depotId': depotId,
-      'deviceId': deviceId,
-    });
+    await api.post(Api.sales,
+      params: {'depotId': depotId},
+      data: {
+        'id': saleId,
+        if (customerId != null) 'customerId': customerId,
+        'lines': lines,
+        'payments': payments.entries
+            .where((e) => e.value > 0)
+            .map((e) => {'id': uuid.v4(), 'method': e.key, 'amount': e.value})
+            .toList(),
+      },
+    );
 
     final result = _SaleResult(
       saleId: saleId,
