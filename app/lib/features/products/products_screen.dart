@@ -189,6 +189,7 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
               final p = filtered[i];
               final units = (p['units'] as List?)?.cast<Map<String, dynamic>>() ?? [];
               final baseUnit = units.where((u) => u['isBase'] == true).firstOrNull;
+              final bulkCount = units.where((u) => u['isBase'] != true).length;
               final stockLevels =
                   (p['stockLevels'] as List?)?.cast<Map<String, dynamic>>() ?? [];
               final totalQty =
@@ -210,7 +211,7 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
                 subtitle: Text([
                   if (p['brand'] != null) p['brand'] as String,
                   if (cat['name'] != null) cat['name'] as String,
-                  if (units.length > 1) '${units.length} unités',
+                  if (bulkCount > 0) '$bulkCount conditionn.',
                 ].join(' · ')),
                 trailing: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -230,14 +231,12 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
                         if (baseUnit != null)
                           Text(
                             formatFcfa(baseUnit['retailPrice'] as int? ?? 0),
-                            style:
-                                const TextStyle(fontSize: 11, color: kTextSecondary),
+                            style: const TextStyle(fontSize: 11, color: kTextSecondary),
                           ),
                       ],
                     ),
                     PopupMenuButton<String>(
-                      icon: const Icon(Icons.more_vert,
-                          size: 20, color: kTextSecondary),
+                      icon: const Icon(Icons.more_vert, size: 20, color: kTextSecondary),
                       onSelected: (action) {
                         if (action == 'edit') _editProduct(context, p);
                         if (action == 'delete') _deleteProduct(context, p);
@@ -256,8 +255,7 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
                           value: 'delete',
                           child: ListTile(
                             leading: Icon(Icons.delete_outline, color: kDanger),
-                            title: Text('Supprimer',
-                                style: TextStyle(color: kDanger)),
+                            title: Text('Supprimer', style: TextStyle(color: kDanger)),
                             contentPadding: EdgeInsets.zero,
                             dense: true,
                           ),
@@ -275,38 +273,42 @@ class _ProductsListState extends ConsumerState<_ProductsList> {
   }
 }
 
-// ── Unit form entry (one row per unit in the product form) ────────────────────
+// ── Bulk conditioning entry (Tonne, Lot de 10, etc.) ─────────────────────────
+//
+// One row in the "Conditionnements en gros" section.
+// - qtyCtrl : how many base units make up this lot (e.g. 400 for 1 Tonne of 6mm bars)
+// - buyCtrl : purchase cost for this lot from supplier
+// - sellCtrl: selling price for this lot to customer
 
-class _UnitFormEntry {
-  String? id; // existing unit ID (for edit upsert)
-  String? name; // selected unit name
-  bool isBase;
-  final TextEditingController factorCtrl;
-  final TextEditingController purchaseCtrl;
-  final TextEditingController retailCtrl;
+class _BulkEntry {
+  String? id;   // existing ProductUnit id (edit mode)
+  String? name; // e.g. "Tonne", "Lot de 10"
 
-  _UnitFormEntry({
+  final TextEditingController qtyCtrl;
+  final TextEditingController buyCtrl;
+  final TextEditingController sellCtrl;
+
+  _BulkEntry({
     this.id,
     this.name,
-    this.isBase = false,
-    String factor = '1',
-    String purchase = '',
-    String retail = '',
-  })  : factorCtrl = TextEditingController(text: factor),
-        purchaseCtrl = TextEditingController(text: purchase),
-        retailCtrl = TextEditingController(text: retail);
+    String qty = '',
+    String buy = '',
+    String sell = '',
+  })  : qtyCtrl = TextEditingController(text: qty),
+        buyCtrl = TextEditingController(text: buy),
+        sellCtrl = TextEditingController(text: sell);
 
   void dispose() {
-    factorCtrl.dispose();
-    purchaseCtrl.dispose();
-    retailCtrl.dispose();
+    qtyCtrl.dispose();
+    buyCtrl.dispose();
+    sellCtrl.dispose();
   }
 }
 
-// ── Product Form Sheet (add & edit) ──────────────────────────────────────────
+// ── Product Form Sheet ────────────────────────────────────────────────────────
 
 class _ProductFormSheet extends StatefulWidget {
-  final Map<String, dynamic>? product; // null = add mode
+  final Map<String, dynamic>? product;
   final List<Map<String, dynamic>> categories;
   final List<Map<String, dynamic>> existingUnits;
 
@@ -328,17 +330,32 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
 
   final _nameCtrl = TextEditingController();
   final _brandCtrl = TextEditingController();
+  final _baseAchatCtrl = TextEditingController();
+  final _baseVenteCtrl = TextEditingController();
 
   String? _categoryId;
+  String? _baseUnitName;
+  String? _baseUnitId;
+
   List<Map<String, dynamic>> _localCategories = [];
   List<Map<String, dynamic>> _localUnits = [];
-  List<_UnitFormEntry> _unitEntries = [];
+  List<_BulkEntry> _bulkEntries = [];
 
   bool _loading = false;
   String? _error;
 
   static const _kNewUnit = '__new__';
   static const _kNewCat = '__new_cat__';
+
+  // Common bulk conditioning names for quick-add chips
+  static const _kCommonBulk = [
+    'Tonne',
+    'Lot de 10',
+    'Lot de 25',
+    'Douzaine',
+    'Palette',
+    'Sac',
+  ];
 
   @override
   void initState() {
@@ -353,30 +370,33 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       final cat = p['category'] as Map?;
       _categoryId = cat?['id'] as String?;
 
-      final rawUnits =
-          (p['units'] as List?)?.cast<Map<String, dynamic>>() ?? [];
-      final sorted = [
-        ...rawUnits.where((u) => u['isBase'] == true),
-        ...rawUnits.where((u) => u['isBase'] != true),
-      ];
-      for (final u in sorted) {
+      final rawUnits = (p['units'] as List?)?.cast<Map>() ?? [];
+      final base = rawUnits.where((u) => u['isBase'] == true).firstOrNull;
+      if (base != null) {
+        _baseUnitId = base['id'] as String?;
+        _baseUnitName = base['name'] as String?;
+        _baseAchatCtrl.text = (base['purchasePrice'] as int? ?? 0).toString();
+        _baseVenteCtrl.text = (base['retailPrice'] as int? ?? 0).toString();
+        // Ensure the base unit name is in the local list
+        if (_baseUnitName != null &&
+            !_localUnits.any((u) => u['name'] == _baseUnitName)) {
+          _localUnits = [..._localUnits, {'id': _baseUnitName, 'name': _baseUnitName}];
+        }
+      }
+
+      for (final u in rawUnits.where((u) => u['isBase'] != true)) {
         final uName = u['name'] as String?;
         if (uName != null && !_localUnits.any((l) => l['name'] == uName)) {
           _localUnits = [..._localUnits, {'id': u['id'], 'name': uName}];
         }
-        _unitEntries.add(_UnitFormEntry(
+        _bulkEntries.add(_BulkEntry(
           id: u['id'] as String?,
           name: uName,
-          isBase: u['isBase'] as bool? ?? false,
-          factor: (u['factor'] as int? ?? 1).toString(),
-          purchase: (u['purchasePrice'] as int? ?? 0).toString(),
-          retail: (u['retailPrice'] as int? ?? 0).toString(),
+          qty: (u['factor'] as int? ?? 1).toString(),
+          buy: (u['purchasePrice'] as int? ?? 0).toString(),
+          sell: (u['retailPrice'] as int? ?? 0).toString(),
         ));
       }
-    }
-
-    if (_unitEntries.isEmpty) {
-      _unitEntries.add(_UnitFormEntry(isBase: true));
     }
   }
 
@@ -384,26 +404,27 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
   void dispose() {
     _nameCtrl.dispose();
     _brandCtrl.dispose();
-    for (final u in _unitEntries) {
-      u.dispose();
+    _baseAchatCtrl.dispose();
+    _baseVenteCtrl.dispose();
+    for (final e in _bulkEntries) {
+      e.dispose();
     }
     super.dispose();
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Dialogs ────────────────────────────────────────────────────────────────
 
-  Future<void> _promptNewUnit(int idx) async {
+  Future<String?> _askName(String title, String hint) async {
     final ctrl = TextEditingController();
-    final name = await showDialog<String>(
+    return showDialog<String>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Nouvelle unité'),
+        title: Text(title),
         content: TextField(
           controller: ctrl,
           autofocus: true,
           textCapitalization: TextCapitalization.words,
-          decoration:
-              const InputDecoration(hintText: 'ex: Barre, Tonne, Sac 50kg…'),
+          decoration: InputDecoration(hintText: hint),
           onSubmitted: (_) => Navigator.pop(ctx, ctrl.text.trim()),
         ),
         actions: [
@@ -415,47 +436,31 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
         ],
       ),
     );
+  }
+
+  Future<void> _promptNewBaseUnit() async {
+    final name = await _askName('Nouvelle unité', 'ex: Barre, Sac, Tube, Plaque…');
     if (name == null || name.isEmpty) return;
     try {
       final res = await _api.post(Api.units, data: {'name': name});
       final created = res.data as Map<String, dynamic>;
       setState(() {
         _localUnits = [..._localUnits, created];
-        _unitEntries[idx].name = created['name'] as String;
+        _baseUnitName = created['name'] as String;
       });
     } catch (_) {
       setState(() {
         if (!_localUnits.any((u) => u['name'] == name)) {
           _localUnits = [..._localUnits, {'id': name, 'name': name}];
         }
-        _unitEntries[idx].name = name;
+        _baseUnitName = name;
       });
     }
   }
 
   Future<void> _promptNewCategory() async {
-    final ctrl = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Nouvelle catégorie'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          textCapitalization: TextCapitalization.words,
-          decoration: const InputDecoration(
-              hintText: 'ex: Barres de fer, Tubes PVC, Ciment…'),
-          onSubmitted: (_) => Navigator.pop(ctx, ctrl.text.trim()),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx), child: const Text('Annuler')),
-          FilledButton(
-              onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-              child: const Text('Créer')),
-        ],
-      ),
-    );
+    final name = await _askName('Nouvelle catégorie',
+        'ex: Barres de fer, Tubes PVC, Ciment, Tôles…');
     if (name == null || name.isEmpty) return;
     try {
       final res =
@@ -468,27 +473,14 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     } catch (_) {}
   }
 
-  void _addUnit() {
-    setState(() => _unitEntries.add(_UnitFormEntry(isBase: false)));
+  void _addBulk({String? presetName}) {
+    setState(() => _bulkEntries.add(_BulkEntry(name: presetName)));
   }
 
-  void _addUnitWithName(String name) {
+  void _removeBulk(int idx) {
     setState(() {
-      if (!_localUnits.any((u) => u['name'] == name)) {
-        _localUnits = [..._localUnits, {'id': name, 'name': name}];
-      }
-      _unitEntries.add(_UnitFormEntry(isBase: false, name: name));
-    });
-  }
-
-  void _removeUnit(int idx) {
-    if (_unitEntries.length <= 1) return;
-    setState(() {
-      _unitEntries[idx].dispose();
-      _unitEntries.removeAt(idx);
-      if (!_unitEntries.any((u) => u.isBase)) {
-        _unitEntries.first.isBase = true;
-      }
+      _bulkEntries[idx].dispose();
+      _bulkEntries.removeAt(idx);
     });
   }
 
@@ -496,30 +488,53 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
 
   Future<void> _submit() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
-    for (int i = 0; i < _unitEntries.length; i++) {
-      if (_unitEntries[i].name == null || _unitEntries[i].name!.isEmpty) {
-        setState(() => _error = 'Sélectionnez une unité pour la ligne ${i + 1}');
+    if (_baseUnitName == null || _baseUnitName!.isEmpty) {
+      setState(() => _error = 'Sélectionnez une unité de base');
+      return;
+    }
+    for (int i = 0; i < _bulkEntries.length; i++) {
+      final e = _bulkEntries[i];
+      if (e.name == null || e.name!.isEmpty) {
+        setState(() => _error = 'Donnez un nom au conditionnement ${i + 1}');
+        return;
+      }
+      if ((int.tryParse(e.qtyCtrl.text) ?? 0) < 2) {
+        setState(() =>
+            _error = '${e.name} : entrez le nombre d\'unités par lot (≥ 2)');
         return;
       }
     }
+
     setState(() {
       _loading = true;
       _error = null;
     });
+
     try {
       const uuid = Uuid();
-      final units = _unitEntries
-          .map((u) => {
-                'id': u.id ?? uuid.v4(),
-                'name': u.name!,
-                'isBase': u.isBase,
-                'factor': int.tryParse(u.factorCtrl.text) ?? 1,
-                'purchasePrice': int.tryParse(u.purchaseCtrl.text) ?? 0,
-                'retailPrice': int.tryParse(u.retailCtrl.text) ?? 0,
-                'wholesalePrice': int.tryParse(u.retailCtrl.text) ?? 0,
-                'wholesaleMinQty': 1,
-              })
-          .toList();
+
+      final units = <Map<String, dynamic>>[
+        {
+          'id': _baseUnitId ?? uuid.v4(),
+          'name': _baseUnitName!,
+          'isBase': true,
+          'factor': 1,
+          'purchasePrice': int.tryParse(_baseAchatCtrl.text) ?? 0,
+          'retailPrice': int.tryParse(_baseVenteCtrl.text) ?? 0,
+          'wholesalePrice': int.tryParse(_baseVenteCtrl.text) ?? 0,
+          'wholesaleMinQty': 1,
+        },
+        ..._bulkEntries.map((e) => {
+              'id': e.id ?? uuid.v4(),
+              'name': e.name!,
+              'isBase': false,
+              'factor': int.tryParse(e.qtyCtrl.text) ?? 1,
+              'purchasePrice': int.tryParse(e.buyCtrl.text) ?? 0,
+              'retailPrice': int.tryParse(e.sellCtrl.text) ?? 0,
+              'wholesalePrice': int.tryParse(e.sellCtrl.text) ?? 0,
+              'wholesaleMinQty': 1,
+            }),
+      ];
 
       if (widget.isEdit) {
         await _api.put('${Api.products}/${widget.product!['id']}', data: {
@@ -543,8 +558,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       String label;
       if (msg.contains('400')) {
         label = 'Données invalides';
-      } else if (msg.contains('401')) {
-        label = 'Session expirée — relancez l\'application';
       } else if (msg.contains('409')) {
         label = 'Cet article existe déjà';
       } else if (msg.contains('500')) {
@@ -560,154 +573,126 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     }
   }
 
-  // ── Unit card ──────────────────────────────────────────────────────────────
+  // ── Bulk row widget ────────────────────────────────────────────────────────
 
-  Widget _buildUnitCard(int idx) {
-    final u = _unitEntries[idx];
-    final baseUnitName =
-        _unitEntries.firstWhere((e) => e.isBase, orElse: () => _unitEntries.first).name ?? 'unité base';
+  Widget _buildBulkRow(int idx) {
+    final e = _bulkEntries[idx];
+    final baseName = _baseUnitName ?? 'unité';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
+      padding: const EdgeInsets.fromLTRB(12, 10, 8, 12),
       decoration: BoxDecoration(
-        color: u.isBase
-            ? kPrimary.withValues(alpha: 0.04)
-            : Colors.grey.shade50,
+        color: Colors.amber.shade50,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-            color: u.isBase
-                ? kPrimary.withValues(alpha: 0.25)
-                : Colors.grey.shade200),
+        border: Border.all(color: Colors.amber.shade200),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Card header
+          // Row header: name dropdown + remove button
           Row(children: [
-            if (u.isBase)
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                decoration: BoxDecoration(
-                  color: kPrimary,
-                  borderRadius: BorderRadius.circular(6),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                value: e.name,
+                decoration: const InputDecoration(
+                  labelText: 'Nom du lot *',
+                  isDense: true,
+                  prefixIcon: Icon(Icons.category_outlined, size: 18),
                 ),
-                child: const Text('BASE',
-                    style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.w800,
-                        letterSpacing: 0.5)),
-              )
-            else
-              Text('Unité ${idx + 1}',
-                  style: const TextStyle(
-                      fontWeight: FontWeight.w700,
-                      fontSize: 13,
-                      color: kTextSecondary)),
-            const Spacer(),
-            if (!u.isBase)
-              IconButton(
-                icon: const Icon(Icons.close, size: 18, color: kDanger),
-                onPressed: () => _removeUnit(idx),
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(),
+                items: [
+                  ..._localUnits.map((u) => DropdownMenuItem(
+                        value: u['name'] as String,
+                        child: Text(u['name'] as String),
+                      )),
+                  const DropdownMenuItem(
+                    value: _kNewUnit,
+                    child: Row(children: [
+                      Icon(Icons.add, size: 15, color: kSuccess),
+                      SizedBox(width: 6),
+                      Text('Nouveau nom…',
+                          style: TextStyle(
+                              color: kSuccess, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v == _kNewUnit) {
+                    WidgetsBinding.instance.addPostFrameCallback((_) async {
+                      final name =
+                          await _askName('Nouveau conditionnement',
+                              'ex: Palette, Caisse, Rouleau…');
+                      if (name == null || name.isEmpty) return;
+                      setState(() {
+                        if (!_localUnits.any((u) => u['name'] == name)) {
+                          _localUnits = [
+                            ..._localUnits,
+                            {'id': name, 'name': name}
+                          ];
+                        }
+                        _bulkEntries[idx].name = name;
+                      });
+                    });
+                  } else {
+                    setState(() => _bulkEntries[idx].name = v);
+                  }
+                },
               ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18, color: kDanger),
+              onPressed: () => _removeBulk(idx),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(),
+            ),
           ]),
           const SizedBox(height: 10),
 
-          // Unit name dropdown
-          DropdownButtonFormField<String>(
-            value: u.name,
-            decoration: const InputDecoration(
-              labelText: 'Unité *',
-              prefixIcon: Icon(Icons.scale, size: 18),
-              isDense: true,
+          // Qty per lot
+          Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+            const Text('1 lot = ', style: TextStyle(color: kTextSecondary, fontSize: 13)),
+            SizedBox(
+              width: 72,
+              child: TextFormField(
+                controller: e.qtyCtrl,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onChanged: (_) => setState(() {}),
+                decoration: const InputDecoration(isDense: true),
+                validator: (v) =>
+                    (int.tryParse(v ?? '') ?? 0) < 2 ? 'Min 2' : null,
+                textAlign: TextAlign.center,
+              ),
             ),
-            items: [
-              ..._localUnits.map((lu) => DropdownMenuItem(
-                    value: lu['name'] as String,
-                    child: Text(lu['name'] as String),
-                  )),
-              const DropdownMenuItem(
-                value: _kNewUnit,
-                child: Row(children: [
-                  Icon(Icons.add, size: 15, color: kSuccess),
-                  SizedBox(width: 6),
-                  Text('Nouvelle unité…',
-                      style: TextStyle(
-                          color: kSuccess, fontWeight: FontWeight.w600)),
-                ]),
-              ),
-            ],
-            onChanged: (v) {
-              if (v == _kNewUnit) {
-                // Defer until the dropdown overlay has fully closed to avoid
-                // navigator lock ("_debugLocked" assertion).
-                WidgetsBinding.instance
-                    .addPostFrameCallback((_) => _promptNewUnit(idx));
-              } else {
-                setState(() => _unitEntries[idx].name = v);
-              }
-            },
-            validator: (v) =>
-                (v == null || v.isEmpty || v == _kNewUnit) ? 'Requis' : null,
-          ),
-
-          // Factor row (non-base units only)
-          if (!u.isBase) ...[
-            const SizedBox(height: 8),
-            Row(children: [
-              const Text('1 ', style: TextStyle(fontSize: 14, color: kTextSecondary)),
-              Expanded(
-                flex: 1,
-                child: TextFormField(
-                  controller: u.factorCtrl,
-                  keyboardType: TextInputType.number,
-                  inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  onChanged: (_) => setState(() {}),
-                  decoration: InputDecoration(
-                    labelText: u.name ?? 'unité',
-                    isDense: true,
-                  ),
-                  validator: (v) =>
-                      (int.tryParse(v ?? '') ?? 0) < 1 ? 'Min 1' : null,
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.only(left: 8),
-                child: Text(
-                  '= ${u.factorCtrl.text.isEmpty ? '?' : u.factorCtrl.text} $baseUnitName',
-                  style: const TextStyle(fontSize: 12, color: kTextSecondary),
-                ),
-              ),
-            ]),
-          ],
+            Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: Text(baseName,
+                  style: const TextStyle(color: kTextSecondary, fontSize: 13)),
+            ),
+          ]),
           const SizedBox(height: 8),
 
-          // Prices: achat + vente
+          // Prices for this lot
           Row(children: [
             Expanded(
               child: TextFormField(
-                controller: u.purchaseCtrl,
+                controller: e.buyCtrl,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 decoration: const InputDecoration(
-                    labelText: 'Prix achat *',
+                    labelText: 'Prix achat / lot',
                     suffixText: 'F',
                     isDense: true),
-                validator: (v) =>
-                    (v == null || v.isEmpty) ? 'Requis' : null,
               ),
             ),
             const SizedBox(width: 8),
             Expanded(
               child: TextFormField(
-                controller: u.retailCtrl,
+                controller: e.sellCtrl,
                 keyboardType: TextInputType.number,
                 inputFormatters: [FilteringTextInputFormatter.digitsOnly],
                 decoration: const InputDecoration(
-                    labelText: 'Prix vente *',
+                    labelText: 'Prix vente / lot *',
                     suffixText: 'F',
                     isDense: true),
                 validator: (v) =>
@@ -715,6 +700,25 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               ),
             ),
           ]),
+
+          // Live unit price hint
+          if (e.sellCtrl.text.isNotEmpty &&
+              (int.tryParse(e.qtyCtrl.text) ?? 0) > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Builder(builder: (_) {
+                final qty = int.tryParse(e.qtyCtrl.text) ?? 1;
+                final sell = int.tryParse(e.sellCtrl.text) ?? 0;
+                final perUnit = qty > 0 ? sell ~/ qty : 0;
+                return Text(
+                  'soit ${formatFcfa(perUnit)} / $baseName dans ce lot',
+                  style: const TextStyle(
+                      fontSize: 11,
+                      color: kTextSecondary,
+                      fontStyle: FontStyle.italic),
+                );
+              }),
+            ),
         ],
       ),
     );
@@ -759,11 +763,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               const SizedBox(height: 6),
 
               // ── Informations ──────────────────────────────────────────────
-              const Text('Informations',
-                  style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w700,
-                      color: kTextSecondary)),
+              _sectionLabel('Informations'),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _nameCtrl,
@@ -783,16 +783,13 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                 textCapitalization: TextCapitalization.words,
               ),
               const SizedBox(height: 10),
-
-              // Category dropdown with inline creation
               DropdownButtonFormField<String>(
                 value: _categoryId,
                 decoration: const InputDecoration(
                     labelText: 'Catégorie',
                     prefixIcon: Icon(Icons.category)),
                 items: [
-                  const DropdownMenuItem(
-                      value: null, child: Text('— Aucune —')),
+                  const DropdownMenuItem(value: null, child: Text('— Aucune —')),
                   ..._localCategories.map((c) => DropdownMenuItem(
                         value: c['id'] as String,
                         child: Text(c['name'] as String? ?? ''),
@@ -804,8 +801,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                       SizedBox(width: 6),
                       Text('Nouvelle catégorie…',
                           style: TextStyle(
-                              color: kPrimary,
-                              fontWeight: FontWeight.w600)),
+                              color: kPrimary, fontWeight: FontWeight.w600)),
                     ]),
                   ),
                 ],
@@ -818,62 +814,125 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                   }
                 },
               ),
-              const SizedBox(height: 18),
+              const SizedBox(height: 20),
 
-              // ── Unités de vente ───────────────────────────────────────────
-              Row(children: [
-                const Expanded(
-                  child: Text('Unités de vente',
-                      style: TextStyle(
-                          fontSize: 13,
-                          fontWeight: FontWeight.w700,
-                          color: kTextSecondary)),
-                ),
-                Text('${_unitEntries.length} unité(s)',
-                    style: const TextStyle(
-                        fontSize: 12, color: kTextSecondary)),
-              ]),
-              const SizedBox(height: 8),
-
-              // Unit cards
-              for (int i = 0; i < _unitEntries.length; i++)
-                _buildUnitCard(i),
-
-              // Quick-add bulk unit chips
+              // ── Vente à l'unité ───────────────────────────────────────────
+              _sectionLabel('Vente à l\'unité'),
               const SizedBox(height: 4),
+              const Text(
+                'Prix pour vendre une seule pièce / un seul sac / une seule barre.',
+                style: TextStyle(fontSize: 12, color: kTextSecondary),
+              ),
+              const SizedBox(height: 10),
+              DropdownButtonFormField<String>(
+                value: _baseUnitName,
+                decoration: const InputDecoration(
+                  labelText: 'Unité de base *',
+                  prefixIcon: Icon(Icons.straighten, size: 18),
+                  helperText: 'Comment vous comptez ce produit (barre, sac, tube…)',
+                ),
+                items: [
+                  ..._localUnits.map((u) => DropdownMenuItem(
+                        value: u['name'] as String,
+                        child: Text(u['name'] as String),
+                      )),
+                  const DropdownMenuItem(
+                    value: _kNewUnit,
+                    child: Row(children: [
+                      Icon(Icons.add, size: 15, color: kSuccess),
+                      SizedBox(width: 6),
+                      Text('Nouvelle unité…',
+                          style: TextStyle(
+                              color: kSuccess, fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                ],
+                onChanged: (v) {
+                  if (v == _kNewUnit) {
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _promptNewBaseUnit());
+                  } else {
+                    setState(() => _baseUnitName = v);
+                  }
+                },
+                validator: (v) =>
+                    (v == null || v.isEmpty || v == _kNewUnit) ? 'Requis' : null,
+              ),
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _baseAchatCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                        labelText: 'Prix d\'achat *',
+                        suffixText: 'F',
+                        isDense: true),
+                    validator: (v) =>
+                        (v == null || v.isEmpty) ? 'Requis' : null,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextFormField(
+                    controller: _baseVenteCtrl,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: const InputDecoration(
+                        labelText: 'Prix de vente *',
+                        suffixText: 'F',
+                        isDense: true),
+                    validator: (v) =>
+                        (v == null || v.isEmpty) ? 'Requis' : null,
+                  ),
+                ),
+              ]),
+              const SizedBox(height: 22),
+
+              // ── Conditionnements en gros ──────────────────────────────────
+              _sectionLabel('Conditionnements en gros (optionnel)'),
+              const SizedBox(height: 4),
+              Text(
+                'Ajoutez les lots / tonnes / douzaines avec leur nombre d\'unités et leur prix spécial.',
+                style: const TextStyle(fontSize: 12, color: kTextSecondary),
+              ),
+              const SizedBox(height: 10),
+
+              // Existing bulk rows
+              for (int i = 0; i < _bulkEntries.length; i++)
+                _buildBulkRow(i),
+
+              // Quick-add chips
               Wrap(
                 spacing: 8,
-                runSpacing: 4,
+                runSpacing: 6,
                 children: [
-                  for (final name in [
-                    'Tonne',
-                    'Douzaine',
-                    'Lot de 10',
-                    'Lot de 25',
-                    'Sac 50kg',
-                    'Paquet',
-                  ])
+                  for (final name in _kCommonBulk)
                     ActionChip(
-                      label: Text('+ $name'),
-                      onPressed: () => _addUnitWithName(name),
-                      backgroundColor: kPrimary.withValues(alpha: 0.08),
-                      labelStyle: const TextStyle(
-                          color: kPrimary,
+                      avatar: const Icon(Icons.add, size: 14),
+                      label: Text(name),
+                      onPressed: () => _addBulk(presetName: name),
+                      backgroundColor: Colors.orange.shade50,
+                      side: BorderSide(color: Colors.orange.shade200),
+                      labelStyle: TextStyle(
+                          color: Colors.orange.shade800,
                           fontWeight: FontWeight.w600,
                           fontSize: 12),
-                      padding: EdgeInsets.zero,
-                      materialTapTargetSize:
-                          MaterialTapTargetSize.shrinkWrap,
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     ),
                   ActionChip(
-                    label: const Text('+ Autre…'),
-                    onPressed: _addUnit,
+                    avatar: const Icon(Icons.add, size: 14),
+                    label: const Text('Autre lot…'),
+                    onPressed: _addBulk,
                     backgroundColor: Colors.grey.shade100,
+                    side: BorderSide(color: Colors.grey.shade300),
                     labelStyle: const TextStyle(
                         color: kTextSecondary,
                         fontWeight: FontWeight.w600,
                         fontSize: 12),
-                    padding: EdgeInsets.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                   ),
                 ],
@@ -881,8 +940,7 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
 
               if (_error != null) ...[
                 const SizedBox(height: 10),
-                Text(_error!,
-                    style: const TextStyle(color: kDanger, fontSize: 13)),
+                Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
               ],
               const SizedBox(height: 20),
               SizedBox(
@@ -909,6 +967,12 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
       ),
     );
   }
+
+  Widget _sectionLabel(String text) => Text(
+        text,
+        style: const TextStyle(
+            fontSize: 13, fontWeight: FontWeight.w800, color: kPrimary),
+      );
 }
 
 // ── Error / Retry ─────────────────────────────────────────────────────────────
@@ -974,21 +1038,15 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
   }
 
   Future<void> _load() async {
-    setState(() {
-      _loadingUnits = true;
-      _error = null;
-    });
+    setState(() { _loadingUnits = true; _error = null; });
     try {
       final res = await _api.get(Api.units);
       setState(() {
         _units = (res.data as List).cast<Map<String, dynamic>>();
         _loadingUnits = false;
       });
-    } catch (e) {
-      setState(() {
-        _error = 'Erreur de chargement';
-        _loadingUnits = false;
-      });
+    } catch (_) {
+      setState(() { _error = 'Erreur de chargement'; _loadingUnits = false; });
     }
   }
 
@@ -1017,13 +1075,10 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
         title: const Text('Supprimer l\'unité'),
         content: Text('Supprimer "$name" ?'),
         actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Annuler')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Annuler')),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child:
-                const Text('Supprimer', style: TextStyle(color: kDanger)),
+            child: const Text('Supprimer', style: TextStyle(color: kDanger)),
           ),
         ],
       ),
@@ -1038,9 +1093,8 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final screenH = MediaQuery.of(context).size.height;
     return Container(
-      height: screenH * 0.65,
+      height: MediaQuery.of(context).size.height * 0.65,
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
@@ -1050,8 +1104,7 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
           Center(
             child: Container(
               margin: const EdgeInsets.only(top: 10, bottom: 4),
-              width: 40,
-              height: 4,
+              width: 40, height: 4,
               decoration: BoxDecoration(
                   color: Colors.grey.shade300,
                   borderRadius: BorderRadius.circular(2)),
@@ -1061,9 +1114,8 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
             padding: const EdgeInsets.fromLTRB(20, 8, 8, 8),
             child: Row(children: [
               const Expanded(
-                child: Text('Gérer les unités',
-                    style: TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w800)),
+                child: Text('Gérer les unités de base',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
               ),
               IconButton(
                   onPressed: () => Navigator.pop(context),
@@ -1077,7 +1129,7 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
                 child: TextField(
                   controller: _nameCtrl,
                   decoration: const InputDecoration(
-                    hintText: 'Nouvelle unité (ex: Barre, Tonne, Sac)',
+                    hintText: 'Nouvelle unité (ex: Barre, Sac, Tube)',
                     prefixIcon: Icon(Icons.add),
                   ),
                   textCapitalization: TextCapitalization.words,
@@ -1089,8 +1141,7 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
                 onPressed: _saving ? null : _create,
                 child: _saving
                     ? const SizedBox(
-                        width: 20,
-                        height: 20,
+                        width: 20, height: 20,
                         child: CircularProgressIndicator(
                             color: Colors.white, strokeWidth: 2))
                     : const Text('Ajouter'),
@@ -1110,21 +1161,19 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
                 : _units.isEmpty
                     ? const Center(
                         child: Text(
-                          'Aucune unité créée.\nTapez un nom et appuyez sur Ajouter.',
+                          'Aucune unité.\nTapez un nom et appuyez sur Ajouter.',
                           textAlign: TextAlign.center,
                           style: TextStyle(color: kTextSecondary),
                         ),
                       )
                     : ListView.separated(
                         itemCount: _units.length,
-                        separatorBuilder: (_, __) =>
-                            const Divider(height: 1),
+                        separatorBuilder: (_, __) => const Divider(height: 1),
                         itemBuilder: (_, i) {
                           final u = _units[i];
                           return ListTile(
                             leading: Container(
-                              width: 36,
-                              height: 36,
+                              width: 36, height: 36,
                               decoration: BoxDecoration(
                                 color: kPrimary.withValues(alpha: 0.1),
                                 borderRadius: BorderRadius.circular(8),
@@ -1133,13 +1182,11 @@ class _UnitsManagerSheetState extends State<_UnitsManagerSheet> {
                                   color: kPrimary, size: 18),
                             ),
                             title: Text(u['name'] as String,
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600)),
+                                style: const TextStyle(fontWeight: FontWeight.w600)),
                             trailing: IconButton(
-                              icon: const Icon(Icons.delete_outline,
-                                  color: kDanger),
-                              onPressed: () => _delete(
-                                  u['id'] as String, u['name'] as String),
+                              icon: const Icon(Icons.delete_outline, color: kDanger),
+                              onPressed: () =>
+                                  _delete(u['id'] as String, u['name'] as String),
                             ),
                           );
                         },
