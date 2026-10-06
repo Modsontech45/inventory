@@ -150,13 +150,14 @@ class _StockListState extends ConsumerState<_StockList> {
             final prod = i['product'] as Map? ?? {};
             final name = (prod['name'] as String? ?? '').toLowerCase();
             final brand = (prod['brand'] as String? ?? '').toLowerCase();
-            return name.contains(_query.toLowerCase()) || brand.contains(_query.toLowerCase());
+            return name.contains(_query.toLowerCase()) ||
+                brand.contains(_query.toLowerCase());
           }).toList();
 
     return Column(
       children: [
         Padding(
-          padding: const EdgeInsets.all(12),
+          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
           child: TextField(
             decoration: const InputDecoration(
               prefixIcon: Icon(Icons.search),
@@ -166,85 +167,268 @@ class _StockListState extends ConsumerState<_StockList> {
           ),
         ),
         Expanded(
-          child: ListView.separated(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
             itemCount: filtered.length,
-            separatorBuilder: (_, __) => const Divider(height: 1),
-            itemBuilder: (_, i) {
-              final item = filtered[i];
-              final prod = item['product'] as Map? ?? {};
-              final cat = prod['category'] as Map? ?? {};
-              final units = (prod['units'] as List?)?.cast<Map>() ?? [];
-              final base = units.where((u) => u['isBase'] == true).firstOrNull
-                  ?? (units.isNotEmpty ? units.first : null);
-
-              final qty = item['cachedQty'] as int? ?? 0;
-              final isLow = item['isLowStock'] as bool? ?? false;
-              final isOut = item['isOutOfStock'] as bool? ?? false;
-              final isNeg = qty < 0;
-
-              Color statusColor = kSuccess;
-              if (isNeg || isOut) statusColor = kDanger;
-              else if (isLow) statusColor = kWarning;
-
-              final purchasePrice = base?['purchasePrice'] as int? ?? 0;
-              final costValue = qty * purchasePrice;
-
-              final breakdown = _unitBreakdown(qty, units);
-
-              return ListTile(
-                onTap: () => _openAdjust(context, item),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-                leading: Container(
-                  width: 8,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: statusColor,
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                title: Text(prod['name'] as String? ?? '',
-                    style: const TextStyle(fontWeight: FontWeight.w600)),
-                subtitle: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    if ((cat['name'] ?? prod['brand']) != null)
-                      Text(
-                        [
-                          if (cat['name'] != null) cat['name'] as String,
-                          if (prod['brand'] != null) prod['brand'] as String,
-                        ].join(' · '),
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    if (breakdown.isNotEmpty)
-                      Text(
-                        '≈ ${breakdown.join(' · ')}',
-                        style: const TextStyle(fontSize: 11, color: kTextSecondary),
-                      ),
-                  ],
-                ),
-                isThreeLine: breakdown.isNotEmpty,
-                trailing: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    Text(
-                      '$qty ${base?['name'] ?? 'u'}',
-                      style: TextStyle(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 14,
-                          color: statusColor),
-                    ),
-                    Text(
-                      formatFcfa(costValue),
-                      style: const TextStyle(fontSize: 11, color: kTextSecondary),
-                    ),
-                  ],
-                ),
-              );
-            },
+            itemBuilder: (_, i) => _StockCard(
+              item: filtered[i],
+              onTap: () => _openAdjust(context, filtered[i]),
+            ),
           ),
         ),
       ],
+    );
+  }
+}
+
+// ── Stock Card ────────────────────────────────────────────────────────────────
+
+class _StockCard extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final VoidCallback onTap;
+  const _StockCard({required this.item, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final prod = item['product'] as Map? ?? {};
+    final cat = prod['category'] as Map? ?? {};
+    final units = (prod['units'] as List?)?.cast<Map>() ?? [];
+    final base = units.where((u) => u['isBase'] == true).firstOrNull ??
+        (units.isNotEmpty ? units.first : null);
+    final bulk = units.where((u) => u['isBase'] != true).toList();
+
+    final qty = item['cachedQty'] as int? ?? 0;
+    final isLow = item['isLowStock'] as bool? ?? false;
+    final isOut = item['isOutOfStock'] as bool? ?? false;
+    final isNeg = qty < 0;
+
+    Color statusColor = kSuccess;
+    String statusLabel = 'En stock';
+    IconData statusIcon = Icons.check_circle_outline;
+    if (isNeg || isOut) {
+      statusColor = kDanger;
+      statusLabel = 'Rupture';
+      statusIcon = Icons.cancel_outlined;
+    } else if (isLow) {
+      statusColor = kWarning;
+      statusLabel = 'Stock faible';
+      statusIcon = Icons.warning_amber_outlined;
+    }
+
+    final baseName = base?['name'] as String? ?? 'u';
+    final retailPrice = base?['retailPrice'] as int? ?? 0;
+    final purchasePrice = base?['purchasePrice'] as int? ?? 0;
+    final costValue = qty * purchasePrice;
+
+    // Build bulk equivalents
+    final equivalents = <Map<String, String>>[];
+    for (final u in bulk) {
+      final factor = u['factor'] as int? ?? 1;
+      if (factor < 2) continue;
+      final whole = qty ~/ factor;
+      final rem = qty % factor;
+      final name = u['name'] as String? ?? '';
+      final uRetail = u['retailPrice'] as int? ?? 0;
+      equivalents.add({
+        'label': rem == 0 ? '$whole $name' : '$whole $name + $rem',
+        'price': uRetail > 0 ? formatFcfa(uRetail) : '',
+        'factor': '$factor $baseName = 1 $name',
+      });
+    }
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 2,
+      shadowColor: Colors.black12,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      clipBehavior: Clip.hardEdge,
+      child: InkWell(
+        onTap: onTap,
+        child: IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // Status bar (left edge)
+              Container(width: 6, color: statusColor),
+
+              // Main content
+              Expanded(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // ── Header ──────────────────────────────────────────
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              prod['name'] as String? ?? '',
+                              style: const TextStyle(
+                                  fontSize: 16, fontWeight: FontWeight.w800),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 8, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: statusColor.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(statusIcon,
+                                    size: 12, color: statusColor),
+                                const SizedBox(width: 4),
+                                Text(statusLabel,
+                                    style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: statusColor)),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      // Category / brand
+                      if (cat['name'] != null || prod['brand'] != null)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 2, bottom: 8),
+                          child: Text(
+                            [
+                              if (cat['name'] != null) cat['name'] as String,
+                              if (prod['brand'] != null) prod['brand'] as String,
+                            ].join(' · '),
+                            style: const TextStyle(
+                                fontSize: 12, color: kTextSecondary),
+                          ),
+                        )
+                      else
+                        const SizedBox(height: 8),
+
+                      // ── Quantity block ───────────────────────────────────
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          // Base qty (prominent)
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                '$qty',
+                                style: TextStyle(
+                                  fontSize: 40,
+                                  fontWeight: FontWeight.w900,
+                                  color: statusColor,
+                                  height: 1,
+                                ),
+                              ),
+                              Text(
+                                baseName,
+                                style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w600,
+                                    color: kTextSecondary),
+                              ),
+                            ],
+                          ),
+
+                          // Equivalents (bulk units)
+                          if (equivalents.isNotEmpty) ...[
+                            const SizedBox(width: 16),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: equivalents
+                                    .map((e) => Padding(
+                                          padding:
+                                              const EdgeInsets.only(bottom: 4),
+                                          child: Row(children: [
+                                            const Icon(
+                                                Icons.subdirectory_arrow_right,
+                                                size: 14,
+                                                color: kTextSecondary),
+                                            const SizedBox(width: 4),
+                                            Expanded(
+                                              child: Text(
+                                                e['label']!,
+                                                style: const TextStyle(
+                                                  fontSize: 14,
+                                                  fontWeight: FontWeight.w700,
+                                                ),
+                                              ),
+                                            ),
+                                            if (e['price']!.isNotEmpty)
+                                              Text(
+                                                e['price']!,
+                                                style: const TextStyle(
+                                                    fontSize: 12,
+                                                    color: kTextSecondary),
+                                              ),
+                                          ]),
+                                        ))
+                                    .toList(),
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+
+                      const SizedBox(height: 10),
+                      const Divider(height: 1),
+                      const SizedBox(height: 8),
+
+                      // ── Footer : prices + adjust hint ────────────────────
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                if (retailPrice > 0)
+                                  Text(
+                                    '${formatFcfa(retailPrice)} / $baseName',
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w700,
+                                        color: kPrimary),
+                                  ),
+                                if (costValue > 0)
+                                  Text(
+                                    'Valeur : ${formatFcfa(costValue)}',
+                                    style: const TextStyle(
+                                        fontSize: 11, color: kTextSecondary),
+                                  ),
+                              ],
+                            ),
+                          ),
+                          // Adjust button
+                          TextButton.icon(
+                            onPressed: onTap,
+                            icon: const Icon(Icons.tune, size: 16),
+                            label: const Text('Ajuster'),
+                            style: TextButton.styleFrom(
+                              foregroundColor: kPrimary,
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 12, vertical: 6),
+                              textStyle: const TextStyle(
+                                  fontSize: 13, fontWeight: FontWeight.w700),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
