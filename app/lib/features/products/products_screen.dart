@@ -315,7 +315,22 @@ class _AddProductSheetState extends State<_AddProductSheet> {
       });
       if (mounted) Navigator.pop(context, true);
     } catch (e) {
-      setState(() => _error = 'Erreur: ${e.toString().contains('400') ? 'Données invalides' : 'Connexion impossible'}');
+      final msg = e.toString();
+      String label;
+      if (msg.contains('400')) {
+        label = 'Données invalides (vérifiez les champs)';
+      } else if (msg.contains('401')) {
+        label = 'Session expirée — relancez l\'application';
+      } else if (msg.contains('409')) {
+        label = 'Cet article existe déjà';
+      } else if (msg.contains('500')) {
+        label = 'Erreur serveur (500) — réessayez dans quelques secondes';
+      } else if (msg.contains('timeout') || msg.contains('SocketException')) {
+        label = 'Serveur en démarrage, réessayez dans 30 secondes…';
+      } else {
+        label = 'Erreur: $msg';
+      }
+      setState(() => _error = label);
     } finally {
       if (mounted) setState(() => _loading = false);
     }
