@@ -1095,9 +1095,8 @@ class _CartSheet extends ConsumerStatefulWidget {
 class _CartSheetState extends ConsumerState<_CartSheet> {
   late String? _customerId;
   late String? _customerName;
-  final Map<String, int> _payments = {
-    'CASH': 0, 'FLOOZ': 0, 'MIXX': 0,
-  };
+  String? _selectedMethod; // 'CASH', 'FLOOZ', 'MIXX'
+  final _cashCtrl = TextEditingController();
   int _discount = 0;
   bool _paying = false;
   String? _error;
@@ -1109,26 +1108,35 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
     _customerName = widget.customerName;
   }
 
-  int get _subtotal =>
-      widget.cart.fold(0, (s, i) => s + i.lineTotal);
+  @override
+  void dispose() {
+    _cashCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _subtotal => widget.cart.fold(0, (s, i) => s + i.lineTotal);
   int get _total => (_subtotal - _discount).clamp(0, 999999999);
-  int get _totalPaid =>
-      _payments.values.fold(0, (s, v) => s + v);
-  int get _change => (_totalPaid - _total).clamp(0, 999999999);
-  bool get _canPay => _totalPaid >= _total && widget.cart.isNotEmpty;
+  int get _cashReceived =>
+      int.tryParse(_cashCtrl.text.trim()) ?? _total;
+  int get _change =>
+      _selectedMethod == 'CASH'
+          ? (_cashReceived - _total).clamp(0, 999999999)
+          : 0;
+  bool get _canPay =>
+      _selectedMethod != null &&
+      widget.cart.isNotEmpty &&
+      (_selectedMethod != 'CASH' || _cashReceived >= _total);
 
   Future<void> _pay() async {
     if (!_canPay) return;
     setState(() { _paying = true; _error = null; });
     try {
       final result = await widget.onPay(
-        payments: Map.from(_payments),
+        payments: {_selectedMethod!: _total},
         discount: _discount,
         customerId: _customerId,
       );
-      if (mounted) {
-        Navigator.pop(context, result);
-      }
+      if (mounted) Navigator.pop(context, result);
     } catch (e) {
       setState(() {
         _error = e.toString().contains('400')
@@ -1140,15 +1148,6 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
         _paying = false;
       });
     }
-  }
-
-  void _quickFill() {
-    // Fill CASH with exact total
-    setState(() {
-      _payments['CASH'] = _total;
-      _payments['FLOOZ'] = 0;
-      _payments['MIXX'] = 0;
-    });
   }
 
   @override
@@ -1452,71 +1451,73 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                   const Divider(),
                   const SizedBox(height: 8),
 
-                  // ── Payment ────────────────────────────────────────
+                  // ── Payment method ─────────────────────────────────
+                  _SectionLabel('Mode de paiement'),
+                  const SizedBox(height: 8),
                   Row(children: [
-                    const Expanded(
-                        child: _SectionLabel('Paiement')),
-                    TextButton.icon(
-                      onPressed: _quickFill,
-                      icon: const Icon(Icons.bolt, size: 16),
-                      label: const Text('Montant exact',
-                          style: TextStyle(fontSize: 12)),
-                      style: TextButton.styleFrom(
-                          padding: EdgeInsets.zero,
-                          tapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap),
+                    _MethodBtn(
+                      label: 'Espèces',
+                      icon: Icons.payments_outlined,
+                      color: kSuccess,
+                      selected: _selectedMethod == 'CASH',
+                      onTap: () => setState(() {
+                        _selectedMethod = 'CASH';
+                        _cashCtrl.clear();
+                      }),
+                    ),
+                    const SizedBox(width: 8),
+                    _MethodBtn(
+                      label: 'Flooz',
+                      icon: Icons.phone_android,
+                      color: const Color(0xFFE65100),
+                      selected: _selectedMethod == 'FLOOZ',
+                      onTap: () => setState(() => _selectedMethod = 'FLOOZ'),
+                    ),
+                    const SizedBox(width: 8),
+                    _MethodBtn(
+                      label: 'Mixx',
+                      icon: Icons.phone_android,
+                      color: const Color(0xFF1B5E20),
+                      selected: _selectedMethod == 'MIXX',
+                      onTap: () => setState(() => _selectedMethod = 'MIXX'),
                     ),
                   ]),
-                  const SizedBox(height: 8),
 
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      _PayBtn(
-                          label: 'Espèces',
-                          icon: Icons.payments_outlined,
-                          color: kSuccess,
-                          value: _payments['CASH']!,
-                          onChanged: (v) =>
-                              setState(() => _payments['CASH'] = v)),
-                      _PayBtn(
-                          label: 'Flooz',
-                          icon: Icons.phone_android,
-                          color: const Color(0xFFE65100),
-                          value: _payments['FLOOZ']!,
-                          onChanged: (v) =>
-                              setState(() => _payments['FLOOZ'] = v)),
-                      _PayBtn(
-                          label: 'Mixx',
-                          icon: Icons.phone_android,
-                          color: const Color(0xFF1B5E20),
-                          value: _payments['MIXX']!,
-                          onChanged: (v) =>
-                              setState(() => _payments['MIXX'] = v)),
-                    ],
-                  ),
-
-                  const SizedBox(height: 10),
-
-                  // Payment summary
-                  if (_totalPaid > 0) ...[
-                    _TotalRow('Payé', _totalPaid,
-                        style: const TextStyle(
-                            fontSize: 13, color: kTextSecondary)),
-                    if (_change > 0)
+                  // Cash received + change (Espèces only)
+                  if (_selectedMethod == 'CASH') ...[
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: _cashCtrl,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly
+                      ],
+                      autofocus: true,
+                      onChanged: (_) => setState(() {}),
+                      decoration: InputDecoration(
+                        labelText: 'Montant reçu (laisser vide = montant exact)',
+                        suffixText: 'F',
+                        prefixIcon: Icon(Icons.payments_outlined,
+                            color: kSuccess),
+                      ),
+                    ),
+                    if (_cashCtrl.text.isNotEmpty && _change > 0) ...[
+                      const SizedBox(height: 8),
                       _TotalRow('Monnaie à rendre', _change,
                           style: const TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.w800,
                               color: kSuccess)),
-                    if (_totalPaid < _total)
-                      _TotalRow(
-                          'Reste à payer', _total - _totalPaid,
+                    ],
+                    if (_cashCtrl.text.isNotEmpty &&
+                        _cashReceived < _total) ...[
+                      const SizedBox(height: 8),
+                      _TotalRow('Insuffisant', _total - _cashReceived,
                           style: const TextStyle(
                               fontSize: 13,
                               fontWeight: FontWeight.w700,
                               color: kDanger)),
+                    ],
                   ],
 
                   if (_error != null) ...[
@@ -1566,7 +1567,7 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                             ? 'Enregistrement…'
                             : _canPay
                                 ? 'Encaisser ${formatFcfa(_total)}'
-                                : 'Manque ${formatFcfa(_total - _totalPaid)}',
+                                : 'Choisir un mode de paiement',
                         style: const TextStyle(
                             fontSize: 16, fontWeight: FontWeight.w800),
                       ),
@@ -1639,87 +1640,47 @@ class _SectionLabel extends StatelessWidget {
           letterSpacing: 0.8));
 }
 
-class _PayBtn extends StatelessWidget {
+class _MethodBtn extends StatelessWidget {
   final String label;
   final IconData icon;
   final Color color;
-  final int value;
-  final ValueChanged<int> onChanged;
-  const _PayBtn({
+  final bool selected;
+  final VoidCallback onTap;
+  const _MethodBtn({
     required this.label,
     required this.icon,
     required this.color,
-    required this.value,
-    required this.onChanged,
+    required this.selected,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final active = value > 0;
-    return GestureDetector(
-      onTap: () async {
-        final ctrl =
-            TextEditingController(text: value > 0 ? value.toString() : '');
-        final result = await showDialog<int>(
-          context: context,
-          builder: (ctx) => AlertDialog(
-            title: Row(children: [
-              Icon(icon, color: color, size: 20),
-              const SizedBox(width: 8),
-              Text('Paiement $label'),
-            ]),
-            content: TextField(
-              controller: ctrl,
-              keyboardType: TextInputType.number,
-              autofocus: true,
-              inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(suffixText: 'F'),
-              onSubmitted: (_) =>
-                  Navigator.pop(ctx, int.tryParse(ctrl.text) ?? 0),
-            ),
-            actions: [
-              TextButton(
-                  onPressed: () => Navigator.pop(ctx, 0),
-                  child: const Text('Effacer')),
-              FilledButton(
-                onPressed: () =>
-                    Navigator.pop(ctx, int.tryParse(ctrl.text) ?? 0),
-                child: const Text('OK'),
-              ),
+    return Expanded(
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          decoration: BoxDecoration(
+            color: selected ? color : Colors.white,
+            border: Border.all(
+                color: selected ? color : Colors.grey.shade300, width: 2),
+            borderRadius: BorderRadius.circular(14),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(icon,
+                  color: selected ? Colors.white : color, size: 22),
+              const SizedBox(height: 6),
+              Text(label,
+                  style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: selected ? Colors.white : color)),
             ],
           ),
-        );
-        if (result != null) onChanged(result);
-      },
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        padding:
-            const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        decoration: BoxDecoration(
-          color: active ? color : Colors.white,
-          border: Border.all(color: active ? color : Colors.grey.shade300),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon,
-                color: active ? Colors.white : color, size: 20),
-            const SizedBox(height: 4),
-            Text(label,
-                style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: active ? Colors.white : color)),
-            if (active)
-              Text(
-                formatFcfaCompact(value),
-                style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white),
-              ),
-          ],
         ),
       ),
     );
