@@ -993,14 +993,14 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
                       orElse: () => _units.first);
                   final baseName = base['name'] as String? ?? '';
                   return ChoiceChip(
-                    label: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Text(uName, style: const TextStyle(fontWeight: FontWeight.w700)),
-                        if (u['isBase'] != true)
-                          Text('1 $uName = $factor $baseName',
-                              style: const TextStyle(fontSize: 10)),
-                      ],
+                    label: Text(
+                      u['isBase'] == true
+                          ? uName
+                          : '$uName ($factor $baseName)',
+                      style: TextStyle(
+                          fontWeight: FontWeight.w700,
+                          fontSize: 12,
+                          color: isSelected ? Colors.white : kTextSecondary),
                     ),
                     selected: isSelected,
                     onSelected: (_) => setState(() {
@@ -1008,8 +1008,6 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
                       _qtyCtrl.clear();
                     }),
                     selectedColor: kPrimary,
-                    labelStyle: TextStyle(
-                        color: isSelected ? Colors.white : kTextSecondary),
                   );
                 }).toList(),
               ),
