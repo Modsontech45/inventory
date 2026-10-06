@@ -640,9 +640,12 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                 ]),
               ),
             ],
-            onChanged: (v) async {
+            onChanged: (v) {
               if (v == _kNewUnit) {
-                await _promptNewUnit(idx);
+                // Defer until the dropdown overlay has fully closed to avoid
+                // navigator lock ("_debugLocked" assertion).
+                WidgetsBinding.instance
+                    .addPostFrameCallback((_) => _promptNewUnit(idx));
               } else {
                 setState(() => _unitEntries[idx].name = v);
               }
@@ -806,9 +809,10 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                     ]),
                   ),
                 ],
-                onChanged: (v) async {
+                onChanged: (v) {
                   if (v == _kNewCat) {
-                    await _promptNewCategory();
+                    WidgetsBinding.instance
+                        .addPostFrameCallback((_) => _promptNewCategory());
                   } else {
                     setState(() => _categoryId = v);
                   }
