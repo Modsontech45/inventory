@@ -41,6 +41,17 @@ final _salesHistoryProvider =
   return [];
 });
 
+final _pendingSalesProvider =
+    FutureProvider.autoDispose<List<Map<String, dynamic>>>((ref) async {
+  final api = ref.watch(_apiProvSales);
+  final depotId = await api.getDepotId() ?? '';
+  final res = await api.get('${Api.sales}/pending',
+      params: depotId.isNotEmpty ? {'depotId': depotId} : null);
+  final data = res.data;
+  if (data is List) return data.cast<Map<String, dynamic>>();
+  return [];
+});
+
 // ── Cart item ─────────────────────────────────────────────────────────────────
 
 class _CartItem {
@@ -87,7 +98,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
   @override
   void initState() {
     super.initState();
-    _tabCtrl = TabController(length: 2, vsync: this);
+    _tabCtrl = TabController(length: 3, vsync: this);
     _tabCtrl.addListener(() => setState(() {}));
   }
 
@@ -148,7 +159,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
 
   Future<void> _openCart() async {
     if (_cart.isEmpty) return;
-    final result = await showModalBottomSheet<_SaleResult>(
+    final sent = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -160,24 +171,25 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
         onRemove: _removeCartItem,
         onCustomerChanged: (id, name) =>
             setState(() { _customerId = id; _customerName = name; }),
-        onPay: _submitSale,
+        onSubmit: _submitSale,
       ),
     );
-    if (result != null && result.success) {
-      _showReceipt(result);
+    if (sent == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Commande envoyée à la caisse'),
+          backgroundColor: kSuccess,
+          duration: Duration(seconds: 3),
+        ),
+      );
     }
   }
 
-  Future<_SaleResult?> _submitSale({
-    required Map<String, int> payments,
-    required int discount,
-    String? customerId,
-  }) async {
+  Future<void> _submitSale({String? customerId}) async {
     final api = ref.read(_apiProvSales);
     final depotId = await api.getDepotId() ?? '';
     const uuid = Uuid();
 
-    final saleId = uuid.v4();
     final lines = _cart
         .map((c) => {
               'id': uuid.v4(),
@@ -193,38 +205,14 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
     await api.post(Api.sales,
       params: {'depotId': depotId},
       data: {
-        'id': saleId,
+        'id': uuid.v4(),
         if (customerId != null) 'customerId': customerId,
         'lines': lines,
-        'payments': payments.entries
-            .where((e) => e.value > 0)
-            .map((e) => {'id': uuid.v4(), 'method': e.key, 'amount': e.value})
-            .toList(),
       },
-    );
-
-    final result = _SaleResult(
-      saleId: saleId,
-      lines: List.from(_cart),
-      total: _total - discount,
-      discount: discount,
-      payments: Map.from(payments),
-      customerName: _customerName,
-      success: true,
     );
 
     _clearCart();
     ref.invalidate(_saleProductsProvider);
-    return result;
-  }
-
-  void _showReceipt(_SaleResult result) {
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (_) => _ReceiptSheet(result: result),
-    );
   }
 
   @override
@@ -256,6 +244,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
             onPressed: () {
               ref.invalidate(_saleProductsProvider);
               ref.invalidate(_salesHistoryProvider);
+              ref.invalidate(_pendingSalesProvider);
             },
           ),
         ],
@@ -266,6 +255,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
           unselectedLabelColor: Colors.white70,
           tabs: const [
             Tab(icon: Icon(Icons.point_of_sale_outlined, size: 18), text: 'Vente'),
+            Tab(icon: Icon(Icons.payments_outlined, size: 18), text: 'Caisse'),
             Tab(icon: Icon(Icons.history, size: 18), text: 'Historique'),
           ],
         ),
@@ -273,7 +263,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
       body: TabBarView(
         controller: _tabCtrl,
         children: [
-          // ── Tab 0: POS ──────────────────────────────────────────
+          // ── Tab 0: POS (vendeur) ────────────────────────────────
           ref.watch(_saleProductsProvider).when(
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => _ErrWidget(
@@ -303,33 +293,15 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
             ),
           ),
 
-          // ── Tab 1: History ──────────────────────────────────────
+          // ── Tab 1: Caisse (caissier) ────────────────────────────
+          const _CaisseTab(),
+
+          // ── Tab 2: History ──────────────────────────────────────
           const _SalesHistoryTab(),
         ],
       ),
     );
   }
-}
-
-// ── Sale result (for receipt) ─────────────────────────────────────────────────
-
-class _SaleResult {
-  final String saleId;
-  final List<_CartItem> lines;
-  final int total;
-  final int discount;
-  final Map<String, int> payments;
-  final String? customerName;
-  final bool success;
-  _SaleResult({
-    required this.saleId,
-    required this.lines,
-    required this.total,
-    required this.discount,
-    required this.payments,
-    this.customerName,
-    this.success = false,
-  });
 }
 
 // ── Product browser ───────────────────────────────────────────────────────────
@@ -1071,11 +1043,7 @@ class _CartSheet extends ConsumerStatefulWidget {
   final void Function(int, int) onQtyChanged;
   final void Function(int) onRemove;
   final void Function(String?, String?) onCustomerChanged;
-  final Future<_SaleResult?> Function({
-    required Map<String, int> payments,
-    required int discount,
-    String? customerId,
-  }) onPay;
+  final Future<void> Function({String? customerId}) onSubmit;
 
   const _CartSheet({
     required this.cart,
@@ -1084,7 +1052,7 @@ class _CartSheet extends ConsumerStatefulWidget {
     required this.onQtyChanged,
     required this.onRemove,
     required this.onCustomerChanged,
-    required this.onPay,
+    required this.onSubmit,
   });
 
   @override
@@ -1094,10 +1062,7 @@ class _CartSheet extends ConsumerStatefulWidget {
 class _CartSheetState extends ConsumerState<_CartSheet> {
   late String? _customerId;
   late String? _customerName;
-  String? _selectedMethod; // 'CASH', 'FLOOZ', 'MIXX'
-  final _cashCtrl = TextEditingController();
-  int _discount = 0;
-  bool _paying = false;
+  bool _sending = false;
   String? _error;
 
   @override
@@ -1107,44 +1072,21 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
     _customerName = widget.customerName;
   }
 
-  @override
-  void dispose() {
-    _cashCtrl.dispose();
-    super.dispose();
-  }
+  int get _total => widget.cart.fold(0, (s, i) => s + i.lineTotal);
 
-  int get _subtotal => widget.cart.fold(0, (s, i) => s + i.lineTotal);
-  int get _total => (_subtotal - _discount).clamp(0, 999999999);
-  int get _cashReceived =>
-      int.tryParse(_cashCtrl.text.trim()) ?? _total;
-  int get _change =>
-      _selectedMethod == 'CASH'
-          ? (_cashReceived - _total).clamp(0, 999999999)
-          : 0;
-  bool get _canPay =>
-      _selectedMethod != null &&
-      widget.cart.isNotEmpty &&
-      (_selectedMethod != 'CASH' || _cashReceived >= _total);
-
-  Future<void> _pay() async {
-    if (!_canPay) return;
-    setState(() { _paying = true; _error = null; });
+  Future<void> _send() async {
+    setState(() { _sending = true; _error = null; });
     try {
-      final result = await widget.onPay(
-        payments: {_selectedMethod!: _total},
-        discount: _discount,
-        customerId: _customerId,
-      );
-      if (mounted) Navigator.pop(context, result);
+      await widget.onSubmit(customerId: _customerId);
+      if (mounted) Navigator.pop(context, true);
     } catch (e) {
       setState(() {
-        _error = e.toString().contains('400')
+        _error = e.toString().contains('400') || e.toString().contains('422')
             ? 'Données invalides — vérifiez le panier'
-            : e.toString().contains('timeout') ||
-                    e.toString().contains('Socket')
+            : e.toString().contains('timeout') || e.toString().contains('Socket')
                 ? 'Hors ligne — réessayez'
                 : 'Erreur: ${e.toString().split(':').last.trim()}';
-        _paying = false;
+        _sending = false;
       });
     }
   }
@@ -1272,131 +1214,32 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                     );
                   }),
 
-                  const SizedBox(height: 8),
-                  // Subtotal
-                  if (_discount > 0)
-                    _TotalRow('Sous-total', _subtotal,
-                        style: const TextStyle(color: kTextSecondary)),
+                  const SizedBox(height: 12),
 
-                  // Discount
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(children: [
-                      const Icon(Icons.discount_outlined,
-                          size: 16, color: kTextSecondary),
-                      const SizedBox(width: 8),
-                      const Expanded(
-                          child: Text('Remise',
-                              style: TextStyle(
-                                  color: kTextSecondary,
-                                  fontSize: 13))),
-                      GestureDetector(
-                        onTap: () async {
-                          final ctrl = TextEditingController(
-                              text: _discount > 0
-                                  ? _discount.toString()
-                                  : '');
-                          final result = await showDialog<int>(
-                            context: context,
-                            builder: (ctx) => AlertDialog(
-                              title: const Text('Remise (en FCFA)'),
-                              content: TextField(
-                                controller: ctrl,
-                                keyboardType: TextInputType.number,
-                                autofocus: true,
-                                inputFormatters: [
-                                  FilteringTextInputFormatter.digitsOnly
-                                ],
-                                decoration: const InputDecoration(
-                                    suffixText: 'F'),
-                                onSubmitted: (_) => Navigator.pop(
-                                    ctx, int.tryParse(ctrl.text) ?? 0),
-                              ),
-                              actions: [
-                                TextButton(
-                                    onPressed: () =>
-                                        Navigator.pop(ctx, 0),
-                                    child: const Text('Aucune')),
-                                FilledButton(
-                                  onPressed: () => Navigator.pop(
-                                      ctx,
-                                      int.tryParse(ctrl.text) ?? 0),
-                                  child: const Text('OK'),
-                                ),
-                              ],
-                            ),
-                          );
-                          if (result != null) {
-                            setState(() => _discount = result);
-                          }
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: _discount > 0
-                                ? kDanger.withValues(alpha: 0.1)
-                                : Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            _discount > 0
-                                ? '- ${formatFcfa(_discount)}'
-                                : 'Ajouter',
-                            style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w700,
-                                color: _discount > 0
-                                    ? kDanger
-                                    : kTextSecondary),
-                          ),
-                        ),
-                      ),
-                    ]),
-                  ),
-
-                  _TotalRow('TOTAL', _total,
-                      style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: kPrimary)),
-
-                  const SizedBox(height: 16),
-                  const Divider(),
-                  const SizedBox(height: 8),
-
-                  // ── Customer ───────────────────────────────────────
+                  // ── Customer (optional) ────────────────────────────
                   _SectionLabel('Client (optionnel)'),
                   const SizedBox(height: 8),
                   GestureDetector(
                     onTap: () async {
                       final customers = await ref
                           .read(_saleCustomersProvider.future)
-                          .catchError((_) =>
-                              <Map<String, dynamic>>[]);
+                          .catchError((_) => <Map<String, dynamic>>[]);
                       if (!context.mounted) return;
-                      final picked = await showModalBottomSheet<
-                          Map<String, dynamic>?>(
+                      final picked = await showModalBottomSheet<Map<String, dynamic>?>(
                         context: context,
                         isScrollControlled: true,
-                        builder: (_) => _CustomerPickerSheet(
-                            customers: customers),
+                        builder: (_) => _CustomerPickerSheet(customers: customers),
                       );
                       if (picked != null) {
                         setState(() {
                           _customerId = picked['id'] as String?;
                           _customerName = picked['name'] as String?;
                         });
-                        widget.onCustomerChanged(
-                            _customerId, _customerName);
-                      } else if (picked == null &&
-                          context.mounted) {
-                        // null = clear
+                        widget.onCustomerChanged(_customerId, _customerName);
                       }
                     },
                     child: Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 14, vertical: 12),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
                       decoration: BoxDecoration(
                         color: _customerId != null
                             ? kPrimary.withValues(alpha: 0.06)
@@ -1409,12 +1252,8 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                       ),
                       child: Row(children: [
                         Icon(
-                          _customerId != null
-                              ? Icons.person
-                              : Icons.person_add_outlined,
-                          color: _customerId != null
-                              ? kPrimary
-                              : kTextSecondary,
+                          _customerId != null ? Icons.person : Icons.person_add_outlined,
+                          color: _customerId != null ? kPrimary : kTextSecondary,
                           size: 20,
                         ),
                         const SizedBox(width: 10),
@@ -1424,9 +1263,7 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                             style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w600,
-                                color: _customerId != null
-                                    ? kPrimary
-                                    : kTextSecondary),
+                                color: _customerId != null ? kPrimary : kTextSecondary),
                           ),
                         ),
                         if (_customerId != null)
@@ -1436,88 +1273,20 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                               _customerName = null;
                               widget.onCustomerChanged(null, null);
                             }),
-                            child: const Icon(Icons.close,
-                                size: 18, color: kTextSecondary),
+                            child: const Icon(Icons.close, size: 18, color: kTextSecondary),
                           )
                         else
-                          const Icon(Icons.chevron_right,
-                              color: kTextSecondary),
+                          const Icon(Icons.chevron_right, color: kTextSecondary),
                       ]),
                     ),
                   ),
 
                   const SizedBox(height: 16),
-                  const Divider(),
-                  const SizedBox(height: 8),
-
-                  // ── Payment method ─────────────────────────────────
-                  _SectionLabel('Mode de paiement'),
-                  const SizedBox(height: 8),
-                  Row(children: [
-                    _MethodBtn(
-                      label: 'Espèces',
-                      icon: Icons.payments_outlined,
-                      color: kSuccess,
-                      selected: _selectedMethod == 'CASH',
-                      onTap: () => setState(() {
-                        _selectedMethod = 'CASH';
-                        _cashCtrl.clear();
-                      }),
-                    ),
-                    const SizedBox(width: 8),
-                    _MethodBtn(
-                      label: 'Flooz',
-                      icon: Icons.phone_android,
-                      color: const Color(0xFFE65100),
-                      selected: _selectedMethod == 'FLOOZ',
-                      onTap: () => setState(() => _selectedMethod = 'FLOOZ'),
-                    ),
-                    const SizedBox(width: 8),
-                    _MethodBtn(
-                      label: 'Mixx',
-                      icon: Icons.phone_android,
-                      color: const Color(0xFF1B5E20),
-                      selected: _selectedMethod == 'MIXX',
-                      onTap: () => setState(() => _selectedMethod = 'MIXX'),
-                    ),
-                  ]),
-
-                  // Cash received + change (Espèces only)
-                  if (_selectedMethod == 'CASH') ...[
-                    const SizedBox(height: 12),
-                    TextField(
-                      controller: _cashCtrl,
-                      keyboardType: TextInputType.number,
-                      inputFormatters: [
-                        FilteringTextInputFormatter.digitsOnly
-                      ],
-                      autofocus: true,
-                      onChanged: (_) => setState(() {}),
-                      decoration: InputDecoration(
-                        labelText: 'Montant reçu (laisser vide = montant exact)',
-                        suffixText: 'F',
-                        prefixIcon: Icon(Icons.payments_outlined,
-                            color: kSuccess),
-                      ),
-                    ),
-                    if (_cashCtrl.text.isNotEmpty && _change > 0) ...[
-                      const SizedBox(height: 8),
-                      _TotalRow('Monnaie à rendre', _change,
-                          style: const TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w800,
-                              color: kSuccess)),
-                    ],
-                    if (_cashCtrl.text.isNotEmpty &&
-                        _cashReceived < _total) ...[
-                      const SizedBox(height: 8),
-                      _TotalRow('Insuffisant', _total - _cashReceived,
-                          style: const TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w700,
-                              color: kDanger)),
-                    ],
-                  ],
+                  _TotalRow('TOTAL', _total,
+                      style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: kPrimary)),
 
                   if (_error != null) ...[
                     const SizedBox(height: 8),
@@ -1528,47 +1297,40 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                         borderRadius: BorderRadius.circular(8),
                       ),
                       child: Row(children: [
-                        const Icon(Icons.error_outline,
-                            color: kDanger, size: 16),
+                        const Icon(Icons.error_outline, color: kDanger, size: 16),
                         const SizedBox(width: 8),
-                        Expanded(
-                            child: Text(_error!,
-                                style: const TextStyle(
-                                    color: kDanger, fontSize: 13))),
+                        Expanded(child: Text(_error!,
+                            style: const TextStyle(color: kDanger, fontSize: 13))),
                       ]),
                     ),
                   ],
 
                   const SizedBox(height: 20),
 
-                  // Encaisser button
+                  // Envoyer au caissier
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      onPressed: _canPay && !_paying ? _pay : null,
+                      onPressed: !_sending ? _send : null,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: kSuccess,
+                        backgroundColor: kPrimary,
                         foregroundColor: Colors.white,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 16),
+                        padding: const EdgeInsets.symmetric(vertical: 16),
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(14)),
                       ),
-                      icon: _paying
+                      icon: _sending
                           ? const SizedBox(
                               width: 18, height: 18,
                               child: CircularProgressIndicator(
                                   color: Colors.white, strokeWidth: 2))
-                          : const Icon(Icons.check_circle_outline,
-                              size: 22),
+                          : const Icon(Icons.send_outlined, size: 22),
                       label: Text(
-                        _paying
-                            ? 'Enregistrement…'
-                            : _canPay
-                                ? 'Encaisser ${formatFcfa(_total)}'
-                                : 'Choisir un mode de paiement',
+                        _sending
+                            ? 'Envoi en cours…'
+                            : 'Envoyer à la caisse  •  ${formatFcfa(_total)}',
                         style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.w800),
+                            fontSize: 15, fontWeight: FontWeight.w800),
                       ),
                     ),
                   ),
@@ -1817,118 +1579,462 @@ class _CustomerPickerSheetState extends State<_CustomerPickerSheet> {
   }
 }
 
-// ── Receipt sheet ─────────────────────────────────────────────────────────────
+// ── Caisse tab (caissier validates pending orders) ────────────────────────────
 
-class _ReceiptSheet extends StatelessWidget {
-  final _SaleResult result;
-  const _ReceiptSheet({required this.result});
+class _CaisseTab extends ConsumerStatefulWidget {
+  const _CaisseTab();
+
+  @override
+  ConsumerState<_CaisseTab> createState() => _CaisseTabState();
+}
+
+class _CaisseTabState extends ConsumerState<_CaisseTab> {
+  @override
+  Widget build(BuildContext context) {
+    return ref.watch(_pendingSalesProvider).when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => Center(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.error_outline, color: kDanger, size: 40),
+          const SizedBox(height: 8),
+          const Text('Impossible de charger la caisse'),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: () => ref.invalidate(_pendingSalesProvider),
+            icon: const Icon(Icons.refresh),
+            label: const Text('Réessayer'),
+          ),
+        ]),
+      ),
+      data: (orders) {
+        if (orders.isEmpty) {
+          return Center(
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.check_circle_outline,
+                  size: 64, color: Colors.grey.shade300),
+              const SizedBox(height: 12),
+              Text('Aucune commande en attente',
+                  style: TextStyle(
+                      fontSize: 16, color: Colors.grey.shade500)),
+              const SizedBox(height: 16),
+              OutlinedButton.icon(
+                onPressed: () => ref.invalidate(_pendingSalesProvider),
+                icon: const Icon(Icons.refresh),
+                label: const Text('Actualiser'),
+              ),
+            ]),
+          );
+        }
+        return RefreshIndicator(
+          onRefresh: () async => ref.invalidate(_pendingSalesProvider),
+          child: ListView.separated(
+            padding: const EdgeInsets.all(16),
+            itemCount: orders.length,
+            separatorBuilder: (_, __) => const SizedBox(height: 10),
+            itemBuilder: (context, i) => _PendingOrderCard(
+              order: orders[i],
+              onConfirmed: () => ref.invalidate(_pendingSalesProvider),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PendingOrderCard extends ConsumerStatefulWidget {
+  final Map<String, dynamic> order;
+  final VoidCallback onConfirmed;
+  const _PendingOrderCard({required this.order, required this.onConfirmed});
+
+  @override
+  ConsumerState<_PendingOrderCard> createState() => _PendingOrderCardState();
+}
+
+class _PendingOrderCardState extends ConsumerState<_PendingOrderCard> {
+  bool _confirming = false;
+
+  String _timeAgo(String? iso) {
+    if (iso == null) return '';
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '';
+    final diff = DateTime.now().difference(dt);
+    if (diff.inMinutes < 1) return 'À l\'instant';
+    if (diff.inMinutes < 60) return 'Il y a ${diff.inMinutes} min';
+    return 'Il y a ${diff.inHours}h';
+  }
+
+  Future<void> _openConfirm() async {
+    final total = widget.order['totalAmount'] as int? ?? 0;
+    final confirmed = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _ConfirmPaymentSheet(
+        order: widget.order,
+        total: total,
+      ),
+    );
+    if (confirmed == true) widget.onConfirmed();
+  }
 
   @override
   Widget build(BuildContext context) {
+    final o = widget.order;
+    final lines = (o['lines'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+    final total = o['totalAmount'] as int? ?? 0;
+    final number = o['number'] as String? ?? '—';
+    final vendeur = (o['user'] as Map?)?['name'] as String? ?? '—';
+    final customer = (o['customer'] as Map?)?['name'] as String?;
+    final createdAt = o['createdAt'] as String?;
+
     return Container(
-      height: MediaQuery.of(context).size.height * 0.75,
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.04),
+            blurRadius: 8, offset: const Offset(0, 2))],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+            child: Row(children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: kWarning.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(number,
+                    style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: kWarning)),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  customer != null ? customer : 'Client anonyme',
+                  style: const TextStyle(
+                      fontSize: 13, fontWeight: FontWeight.w600),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              Text(_timeAgo(createdAt),
+                  style: const TextStyle(
+                      fontSize: 11, color: kTextSecondary)),
+            ]),
+          ),
+          // Lines summary
+          if (lines.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: lines.take(3).map((l) {
+                  final name = (l['product'] as Map?)?['name'] as String?
+                      ?? 'Article';
+                  final qty = l['qty'] as int? ?? 0;
+                  final price = formatFcfa(l['lineTotal'] as int? ?? 0);
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 2),
+                    child: Row(children: [
+                      Expanded(
+                        child: Text('$qty × $name',
+                            style: const TextStyle(
+                                fontSize: 12, color: kTextSecondary)),
+                      ),
+                      Text(price,
+                          style: const TextStyle(
+                              fontSize: 12, color: kTextSecondary)),
+                    ]),
+                  );
+                }).toList(),
+              ),
+            ),
+          if (lines.length > 3)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 0),
+              child: Text('+${lines.length - 3} autre(s)',
+                  style: const TextStyle(
+                      fontSize: 11, color: kTextSecondary)),
+            ),
+          const SizedBox(height: 8),
+          // Footer
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: const BorderRadius.vertical(
+                  bottom: Radius.circular(14)),
+            ),
+            child: Row(children: [
+              Text('Vendeur: $vendeur',
+                  style: const TextStyle(
+                      fontSize: 11, color: kTextSecondary)),
+              const Spacer(),
+              Text(formatFcfa(total),
+                  style: const TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: kPrimary)),
+              const SizedBox(width: 12),
+              FilledButton.icon(
+                onPressed: _confirming ? null : _openConfirm,
+                style: FilledButton.styleFrom(
+                  backgroundColor: kSuccess,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 14, vertical: 8),
+                ),
+                icon: _confirming
+                    ? const SizedBox(
+                        width: 14, height: 14,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Icon(Icons.check, size: 16),
+                label: const Text('Encaisser',
+                    style: TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w700)),
+              ),
+            ]),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── Confirm payment sheet ─────────────────────────────────────────────────────
+
+class _ConfirmPaymentSheet extends StatefulWidget {
+  final Map<String, dynamic> order;
+  final int total;
+  const _ConfirmPaymentSheet({required this.order, required this.total});
+
+  @override
+  State<_ConfirmPaymentSheet> createState() => _ConfirmPaymentSheetState();
+}
+
+class _ConfirmPaymentSheetState extends State<_ConfirmPaymentSheet> {
+  String? _selectedMethod;
+  final _cashCtrl = TextEditingController();
+  bool _paying = false;
+  String? _error;
+  final _api = ApiClient();
+
+  @override
+  void dispose() {
+    _cashCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _cashReceived =>
+      int.tryParse(_cashCtrl.text.trim()) ?? widget.total;
+  int get _change =>
+      _selectedMethod == 'CASH'
+          ? (_cashReceived - widget.total).clamp(0, 999999999)
+          : 0;
+  bool get _canPay =>
+      _selectedMethod != null &&
+      (_selectedMethod != 'CASH' || _cashReceived >= widget.total);
+
+  Future<void> _confirm() async {
+    if (!_canPay) return;
+    setState(() { _paying = true; _error = null; });
+    try {
+      final depotId = await _api.getDepotId() ?? '';
+      const uuid = Uuid();
+      await _api.post(
+        '${Api.sales}/${widget.order['id']}/confirm',
+        params: {'depotId': depotId},
+        data: {
+          'paymentId': uuid.v4(),
+          'method': _selectedMethod,
+          'amount': widget.total,
+        },
+      );
+      if (mounted) Navigator.pop(context, true);
+    } catch (e) {
+      setState(() {
+        _error = e.toString().contains('404')
+            ? 'Commande introuvable ou déjà confirmée'
+            : e.toString().contains('400')
+                ? 'Données invalides'
+                : 'Erreur: ${e.toString().split(':').last.trim()}';
+        _paying = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = (widget.order['lines'] as List?)
+            ?.cast<Map<String, dynamic>>() ??
+        [];
+
+    return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
       ),
-      child: Column(
-        children: [
-          Center(
-            child: Container(
-              width: 40, height: 4,
-              margin: const EdgeInsets.only(top: 10),
-              decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2)),
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.all(20),
-            child: Column(children: [
-              Container(
-                width: 64, height: 64,
-                decoration: BoxDecoration(
-                  color: kSuccess.withValues(alpha: 0.1),
-                  shape: BoxShape.circle,
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewInsets.bottom + 24,
+        left: 20, right: 20, top: 20,
+      ),
+      child: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Commande ${widget.order['number'] ?? ''}',
+                        style: const TextStyle(
+                            fontSize: 17, fontWeight: FontWeight.w800)),
+                    if ((widget.order['customer'] as Map?)?['name'] != null)
+                      Text((widget.order['customer'] as Map)['name'] as String,
+                          style: const TextStyle(
+                              color: kTextSecondary, fontSize: 13)),
+                  ],
                 ),
-                child: const Icon(Icons.check_circle,
-                    color: kSuccess, size: 40),
               ),
-              const SizedBox(height: 10),
-              const Text('Vente enregistrée !',
-                  style: TextStyle(
-                      fontSize: 20, fontWeight: FontWeight.w900)),
-              if (result.customerName != null)
-                Text('Client: ${result.customerName}',
-                    style: const TextStyle(
-                        fontSize: 14, color: kTextSecondary)),
+              IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close)),
             ]),
-          ),
-          const Divider(height: 1),
-          Expanded(
-            child: ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                ...result.lines.map((l) => Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 4),
-                      child: Row(children: [
-                        Expanded(
-                            child: Text(
-                                '${l.qty}× ${l.productName} (${l.unitName})',
-                                style: const TextStyle(fontSize: 14))),
-                        Text(formatFcfa(l.lineTotal),
-                            style: const TextStyle(
-                                fontWeight: FontWeight.w700)),
-                      ]),
-                    )),
-                const Divider(),
-                if (result.discount > 0)
-                  _TotalRow('Remise', result.discount,
+            const SizedBox(height: 12),
+            // Items
+            ...lines.map((l) {
+              final name = (l['product'] as Map?)?['name'] as String? ?? 'Article';
+              final qty = l['qty'] as int? ?? 0;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(children: [
+                  Expanded(child: Text('$qty × $name',
+                      style: const TextStyle(fontSize: 13))),
+                  Text(formatFcfa(l['lineTotal'] as int? ?? 0),
                       style: const TextStyle(
-                          color: kDanger,
-                          fontWeight: FontWeight.w600)),
-                _TotalRow('TOTAL', result.total,
-                    style: const TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w900,
-                        color: kPrimary)),
+                          fontWeight: FontWeight.w700, fontSize: 13)),
+                ]),
+              );
+            }),
+            const Divider(height: 20),
+            _TotalRow('TOTAL', widget.total,
+                style: const TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: kPrimary)),
+            const SizedBox(height: 16),
+            _SectionLabel('Mode de paiement'),
+            const SizedBox(height: 8),
+            Row(children: [
+              _MethodBtn(
+                label: 'Espèces',
+                icon: Icons.payments_outlined,
+                color: kSuccess,
+                selected: _selectedMethod == 'CASH',
+                onTap: () => setState(() {
+                  _selectedMethod = 'CASH';
+                  _cashCtrl.clear();
+                }),
+              ),
+              const SizedBox(width: 8),
+              _MethodBtn(
+                label: 'Flooz',
+                icon: Icons.phone_android,
+                color: const Color(0xFFE65100),
+                selected: _selectedMethod == 'FLOOZ',
+                onTap: () => setState(() => _selectedMethod = 'FLOOZ'),
+              ),
+              const SizedBox(width: 8),
+              _MethodBtn(
+                label: 'Mixx',
+                icon: Icons.phone_android,
+                color: const Color(0xFF1B5E20),
+                selected: _selectedMethod == 'MIXX',
+                onTap: () => setState(() => _selectedMethod = 'MIXX'),
+              ),
+            ]),
+            if (_selectedMethod == 'CASH') ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _cashCtrl,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  labelText: 'Montant reçu (vide = montant exact)',
+                  suffixText: 'F',
+                  prefixIcon: Icon(Icons.payments_outlined, color: kSuccess),
+                ),
+              ),
+              if (_cashCtrl.text.isNotEmpty && _change > 0) ...[
                 const SizedBox(height: 8),
-                ...result.payments.entries
-                    .where((e) => e.value > 0)
-                    .map((e) => Padding(
-                          padding:
-                              const EdgeInsets.symmetric(vertical: 2),
-                          child: Row(children: [
-                            Container(
-                              width: 10, height: 10,
-                              decoration: BoxDecoration(
-                                color: paymentMethodColor(e.key),
-                                borderRadius: BorderRadius.circular(2),
-                              ),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                                child:
-                                    Text(paymentMethodLabel(e.key))),
-                            Text(formatFcfa(e.value),
-                                style: const TextStyle(
-                                    fontWeight: FontWeight.w600)),
-                          ]),
-                        )),
+                _TotalRow('Monnaie à rendre', _change,
+                    style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w800,
+                        color: kSuccess)),
               ],
-            ),
-          ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
-            child: SizedBox(
+              if (_cashCtrl.text.isNotEmpty && _cashReceived < widget.total) ...[
+                const SizedBox(height: 8),
+                _TotalRow('Insuffisant', widget.total - _cashReceived,
+                    style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                        color: kDanger)),
+              ],
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 8),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: kDanger.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.error_outline, color: kDanger, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(_error!,
+                      style: const TextStyle(color: kDanger, fontSize: 13))),
+                ]),
+              ),
+            ],
+            const SizedBox(height: 20),
+            SizedBox(
               width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Nouvelle vente'),
+              child: ElevatedButton.icon(
+                onPressed: _canPay && !_paying ? _confirm : null,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: kSuccess,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(14)),
+                ),
+                icon: _paying
+                    ? const SizedBox(
+                        width: 18, height: 18,
+                        child: CircularProgressIndicator(
+                            color: Colors.white, strokeWidth: 2))
+                    : const Icon(Icons.check_circle_outline, size: 22),
+                label: Text(
+                  _paying ? 'Confirmation…' : 'Valider le paiement',
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.w800),
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -1,6 +1,6 @@
 import { Controller, Get, Post, Body, Param, Query, UseGuards } from '@nestjs/common';
 import { SalesService } from './sales.service.js';
-import { CreateSaleDto, CancelSaleDto } from './sales.dto.js';
+import { CreateSaleDto, ConfirmSaleDto, CancelSaleDto } from './sales.dto.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
@@ -12,6 +12,11 @@ export class SalesController {
   @Get()
   findAll(@CurrentUser() user: any, @Query() query: any) {
     return this.service.findAll(user.businessId, query.depotId ?? '', query);
+  }
+
+  @Get('pending')
+  findPending(@CurrentUser() user: any, @Query('depotId') depotId: string) {
+    return this.service.findPending(user.businessId, depotId ?? '');
   }
 
   @Get('daily-summary')
@@ -27,6 +32,11 @@ export class SalesController {
   @Post()
   create(@Body() dto: CreateSaleDto, @CurrentUser() user: any, @Query('depotId') depotId: string) {
     return this.service.create(dto, user.businessId, depotId, user.userId, user.deviceId);
+  }
+
+  @Post(':id/confirm')
+  confirm(@Param('id') id: string, @Body() dto: ConfirmSaleDto, @CurrentUser() user: any, @Query('depotId') depotId: string) {
+    return this.service.confirm(id, dto, user.businessId, depotId, user.userId, user.deviceId);
   }
 
   @Post(':id/cancel')

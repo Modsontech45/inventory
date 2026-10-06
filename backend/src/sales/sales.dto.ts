@@ -64,11 +64,18 @@ export class CreateSaleDto {
   @ValidateNested({ each: true })
   @Type(() => SaleLineDto)
   lines: SaleLineDto[];
+}
 
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => SalePaymentDto)
-  payments: SalePaymentDto[];
+export class ConfirmSaleDto {
+  @IsUUID()
+  paymentId: string;
+
+  @IsEnum(PaymentMethod)
+  method: PaymentMethod;
+
+  @IsInt()
+  @Min(0)
+  amount: number;
 }
 
 export class CancelSaleDto {

@@ -1,24 +1,18 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { CreateSaleDto, CancelSaleDto } from './sales.dto.js';
+import { CreateSaleDto, ConfirmSaleDto, CancelSaleDto } from './sales.dto.js';
 import { StockMovementType, SaleStatus } from '@prisma/client';
 
 @Injectable()
 export class SalesService {
   constructor(private prisma: PrismaService) {}
 
+  // Vendeur creates order as ON_HOLD — no stock movement, no payment yet
   async create(dto: CreateSaleDto, businessId: string, depotId: string, userId: string, deviceId: string) {
     const totalAmount = dto.lines.reduce((s, l) => s + l.lineTotal, 0);
-    const totalPaid = dto.payments.reduce((s, p) => s + p.amount, 0);
-
-    if (totalPaid < totalAmount) {
-      const hasCredit = dto.payments.some((p) => p.method === 'CREDIT');
-      if (!hasCredit) throw new BadRequestException('Paiement insuffisant');
-    }
-
     const number = await this.generateSaleNumber(businessId, depotId, deviceId);
 
-    const sale = await this.prisma.sale.create({
+    return this.prisma.sale.create({
       data: {
         id: dto.id,
         businessId,
@@ -28,6 +22,7 @@ export class SalesService {
         deviceId,
         number,
         totalAmount,
+        status: SaleStatus.ON_HOLD,
         cashSessionId: dto.cashSessionId,
         notes: dto.notes,
         lines: {
@@ -42,23 +37,39 @@ export class SalesService {
             lineTotal: l.lineTotal,
           })),
         },
+      },
+      include: { lines: true },
+    });
+  }
+
+  // Caissier confirms payment → stock moves, status becomes ACTIVE
+  async confirm(id: string, dto: ConfirmSaleDto, businessId: string, depotId: string, userId: string, deviceId: string) {
+    const sale = await this.prisma.sale.findFirst({
+      where: { id, businessId, status: SaleStatus.ON_HOLD },
+      include: { lines: true },
+    });
+    if (!sale) throw new NotFoundException('Commande introuvable ou déjà confirmée');
+
+    if (dto.amount < sale.totalAmount) throw new BadRequestException('Montant insuffisant');
+
+    await this.prisma.sale.update({
+      where: { id },
+      data: {
+        status: SaleStatus.ACTIVE,
         payments: {
-          create: dto.payments.map((p) => ({
-            id: p.id,
+          create: [{
+            id: dto.paymentId,
             businessId,
             depotId,
             deviceId,
-            method: p.method,
-            amount: p.amount,
-            reference: p.reference,
-          })),
+            method: dto.method,
+            amount: dto.amount,
+          }],
         },
       },
-      include: { lines: true, payments: true },
     });
 
-    // Create stock exit movements for each line
-    for (const line of dto.lines) {
+    for (const line of sale.lines) {
       const unit = await this.prisma.productUnit.findUnique({ where: { id: line.unitId } });
       if (!unit) continue;
       const qtyInBase = line.qty * unit.factor;
@@ -73,25 +84,36 @@ export class SalesService {
           deviceId,
           type: StockMovementType.SALE_EXIT,
           qtyInBase: -qtyInBase,
-          refDocId: dto.id,
+          refDocId: id,
           refDocType: 'SALE',
         },
       });
 
       await this.prisma.productStockLevel.upsert({
         where: { productId_depotId: { productId: line.productId, depotId } },
-        create: {
-          id: crypto.randomUUID(),
-          businessId,
-          productId: line.productId,
-          depotId,
-          cachedQty: -qtyInBase,
-        },
+        create: { id: crypto.randomUUID(), businessId, productId: line.productId, depotId, cachedQty: -qtyInBase },
         update: { cachedQty: { decrement: qtyInBase } },
       });
     }
 
-    return sale;
+    return this.prisma.sale.findUnique({
+      where: { id },
+      include: { lines: { include: { product: { include: { units: true } } } }, payments: true },
+    });
+  }
+
+  async findPending(businessId: string, depotId: string) {
+    const where: any = { businessId, status: SaleStatus.ON_HOLD };
+    if (depotId) where.depotId = depotId;
+    return this.prisma.sale.findMany({
+      where,
+      orderBy: { createdAt: 'asc' },
+      include: {
+        lines: { include: { product: true } },
+        user: { select: { name: true } },
+        customer: { select: { name: true } },
+      },
+    });
   }
 
   async findAll(businessId: string, depotId: string, query: { from?: string; to?: string; period?: string; customerId?: string; page?: number }) {
