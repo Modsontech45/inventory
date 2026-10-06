@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:intl/intl.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/sync/api_client.dart';
@@ -22,6 +23,21 @@ final _saleCustomersProvider =
   final api = ref.watch(_apiProvSales);
   final res = await api.get(Api.customers);
   return (res.data as List).cast<Map<String, dynamic>>();
+});
+
+final _salesHistoryProvider =
+    FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>(
+        (ref, period) async {
+  final api = ref.watch(_apiProvSales);
+  final res =
+      await api.get(Api.sales, params: {'period': period, 'limit': '50'});
+  final data = res.data;
+  if (data is List) return data.cast<Map<String, dynamic>>();
+  if (data is Map) {
+    final list = data['sales'] ?? data['data'] ?? [];
+    return (list as List).cast<Map<String, dynamic>>();
+  }
+  return [];
 });
 
 // ── Cart item ─────────────────────────────────────────────────────────────────
@@ -58,12 +74,27 @@ class SalesScreen extends ConsumerStatefulWidget {
   ConsumerState<SalesScreen> createState() => _SalesScreenState();
 }
 
-class _SalesScreenState extends ConsumerState<SalesScreen> {
+class _SalesScreenState extends ConsumerState<SalesScreen>
+    with SingleTickerProviderStateMixin {
+  late TabController _tabCtrl;
   final List<_CartItem> _cart = [];
   String _query = '';
   String? _selectedCatId;
   String? _customerId;
   String? _customerName;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabCtrl = TabController(length: 2, vsync: this);
+    _tabCtrl.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _tabCtrl.dispose();
+    super.dispose();
+  }
 
   int get _total => _cart.fold(0, (s, i) => s + i.lineTotal);
   int get _itemCount => _cart.fold(0, (s, i) => s + i.qty);
@@ -197,17 +228,18 @@ class _SalesScreenState extends ConsumerState<SalesScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final onPosTab = _tabCtrl.index == 0;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Vente'),
         actions: [
-          if (_cart.isNotEmpty)
+          if (onPosTab && _cart.isNotEmpty)
             TextButton.icon(
               onPressed: _clearCart,
               icon: const Icon(Icons.delete_outline, color: Colors.white70),
               label: const Text('Vider', style: TextStyle(color: Colors.white70)),
             ),
-          if (_cart.isNotEmpty)
+          if (onPosTab && _cart.isNotEmpty)
             IconButton(
               tooltip: 'Panier',
               onPressed: _openCart,
@@ -220,36 +252,59 @@ class _SalesScreenState extends ConsumerState<SalesScreen> {
             ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(_saleProductsProvider),
+            onPressed: () {
+              ref.invalidate(_saleProductsProvider);
+              ref.invalidate(_salesHistoryProvider);
+            },
           ),
         ],
-      ),
-      body: ref.watch(_saleProductsProvider).when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => _ErrWidget(
-            onRetry: () => ref.invalidate(_saleProductsProvider)),
-        data: (products) => Column(
-          children: [
-            Expanded(
-              child: _ProductBrowser(
-                products: products,
-                query: _query,
-                selectedCatId: _selectedCatId,
-                onQueryChanged: (q) => setState(() => _query = q),
-                onCatChanged: (id) => setState(() => _selectedCatId = id),
-                onAddToCart: _addToCart,
-                qtyInCart: _qtyInCart,
-              ),
-            ),
-            if (_cart.isNotEmpty)
-              _CartBar(
-                itemCount: _itemCount,
-                total: _total,
-                customerName: _customerName,
-                onTap: _openCart,
-              ),
+        bottom: TabBar(
+          controller: _tabCtrl,
+          indicatorColor: Colors.white,
+          labelColor: Colors.white,
+          unselectedLabelColor: Colors.white70,
+          tabs: const [
+            Tab(icon: Icon(Icons.point_of_sale_outlined, size: 18), text: 'Vente'),
+            Tab(icon: Icon(Icons.history, size: 18), text: 'Historique'),
           ],
         ),
+      ),
+      body: TabBarView(
+        controller: _tabCtrl,
+        children: [
+          // ── Tab 0: POS ──────────────────────────────────────────
+          ref.watch(_saleProductsProvider).when(
+            loading: () => const Center(child: CircularProgressIndicator()),
+            error: (e, _) => _ErrWidget(
+                onRetry: () => ref.invalidate(_saleProductsProvider)),
+            data: (products) => Column(
+              children: [
+                Expanded(
+                  child: _ProductBrowser(
+                    products: products,
+                    query: _query,
+                    selectedCatId: _selectedCatId,
+                    onQueryChanged: (q) => setState(() => _query = q),
+                    onCatChanged: (id) =>
+                        setState(() => _selectedCatId = id),
+                    onAddToCart: _addToCart,
+                    qtyInCart: _qtyInCart,
+                  ),
+                ),
+                if (_cart.isNotEmpty)
+                  _CartBar(
+                    itemCount: _itemCount,
+                    total: _total,
+                    customerName: _customerName,
+                    onTap: _openCart,
+                  ),
+              ],
+            ),
+          ),
+
+          // ── Tab 1: History ──────────────────────────────────────
+          const _SalesHistoryTab(),
+        ],
       ),
     );
   }
@@ -1927,6 +1982,294 @@ class _ReceiptSheet extends StatelessWidget {
         ],
       ),
     );
+  }
+}
+
+// ── Sales history tab ─────────────────────────────────────────────────────────
+
+class _SalesHistoryTab extends ConsumerStatefulWidget {
+  const _SalesHistoryTab();
+
+  @override
+  ConsumerState<_SalesHistoryTab> createState() => _SalesHistoryTabState();
+}
+
+class _SalesHistoryTabState extends ConsumerState<_SalesHistoryTab>
+    with AutomaticKeepAliveClientMixin {
+  String _period = 'today';
+
+  @override
+  bool get wantKeepAlive => true;
+
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+    return Column(
+      children: [
+        // Period selector
+        Container(
+          color: kBackground,
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Row(
+            children: [
+              for (final p in [
+                ('today', "Aujourd'hui"),
+                ('week', 'Semaine'),
+                ('month', 'Mois'),
+              ])
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 3),
+                    child: GestureDetector(
+                      onTap: () => setState(() => _period = p.$1),
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _period == p.$1
+                              ? kPrimary
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color: _period == p.$1
+                                  ? kPrimary
+                                  : Colors.grey.shade300),
+                        ),
+                        child: Text(
+                          p.$2,
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: _period == p.$1
+                                  ? Colors.white
+                                  : kTextSecondary),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const Divider(height: 1),
+
+        Expanded(
+          child: ref.watch(_salesHistoryProvider(_period)).when(
+            loading: () =>
+                const Center(child: CircularProgressIndicator()),
+            error: (e, _) => Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Icon(Icons.wifi_off,
+                      size: 48, color: kTextSecondary),
+                  const SizedBox(height: 8),
+                  const Text('Impossible de charger l\'historique',
+                      style: TextStyle(color: kTextSecondary)),
+                  TextButton.icon(
+                    onPressed: () =>
+                        ref.invalidate(_salesHistoryProvider),
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Réessayer'),
+                  ),
+                ],
+              ),
+            ),
+            data: (sales) {
+              if (sales.isEmpty) {
+                return Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.receipt_long_outlined,
+                          size: 56,
+                          color: Colors.grey.shade300),
+                      const SizedBox(height: 12),
+                      const Text('Aucune vente sur cette période',
+                          style: TextStyle(color: kTextSecondary)),
+                    ],
+                  ),
+                );
+              }
+
+              // Summary totals
+              final totalRevenue = sales.fold<int>(
+                  0, (s, sale) => s + (sale['totalAmount'] as int? ?? 0));
+              final totalSales = sales.length;
+
+              return Column(
+                children: [
+                  // Summary banner
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+                    color: kSuccess.withValues(alpha: 0.06),
+                    child: Row(children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('$totalSales vente${totalSales > 1 ? 's' : ''}',
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  color: kTextSecondary,
+                                  fontWeight: FontWeight.w600)),
+                          Text(formatFcfa(totalRevenue),
+                              style: const TextStyle(
+                                  fontSize: 22,
+                                  fontWeight: FontWeight.w900,
+                                  color: kSuccess)),
+                        ],
+                      ),
+                    ]),
+                  ),
+                  const Divider(height: 1),
+
+                  // Sales list
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: sales.length,
+                      itemBuilder: (_, i) =>
+                          _SaleHistoryCard(sale: sales[i]),
+                    ),
+                  ),
+                ],
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _SaleHistoryCard extends StatelessWidget {
+  final Map<String, dynamic> sale;
+  const _SaleHistoryCard({required this.sale});
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = sale['totalAmount'] as int? ?? 0;
+    final payments =
+        (sale['payments'] as List?)?.cast<Map>() ?? [];
+    final lines = (sale['lines'] as List?)?.cast<Map>() ?? [];
+    final customer = sale['customer'] as Map?;
+    final createdAt = sale['createdAt'] as String?;
+    final number = sale['number'] as String? ?? '';
+    final seller = sale['seller'] as String? ?? sale['user'] as String? ?? '';
+
+    final primaryMethod = payments.isNotEmpty
+        ? payments.first['method'] as String? ?? ''
+        : '';
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(12, 6, 12, 0),
+      elevation: 1,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(children: [
+          // Method color bar
+          Container(
+            width: 4,
+            height: 56,
+            decoration: BoxDecoration(
+              color: paymentMethodColor(primaryMethod),
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  if (number.isNotEmpty)
+                    Text(number,
+                        style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700)),
+                  if (seller.isNotEmpty) ...[
+                    const SizedBox(width: 8),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 6, vertical: 2),
+                      decoration: BoxDecoration(
+                        color: kPrimary.withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(seller,
+                          style: const TextStyle(
+                              fontSize: 10,
+                              color: kPrimary,
+                              fontWeight: FontWeight.w600)),
+                    ),
+                  ],
+                ]),
+                const SizedBox(height: 2),
+                Text(
+                  [
+                    if (customer != null)
+                      customer['name'] as String? ?? ''
+                    else
+                      'Client anonyme',
+                    if (lines.isNotEmpty) '${lines.length} article${lines.length > 1 ? 's' : ''}',
+                  ].join('  ·  '),
+                  style: const TextStyle(
+                      fontSize: 12, color: kTextSecondary),
+                ),
+                if (payments.isNotEmpty)
+                  Row(
+                    children: payments.map((p) => Padding(
+                      padding: const EdgeInsets.only(right: 6, top: 2),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: paymentMethodColor(p['method'] as String? ?? '')
+                              .withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(4),
+                        ),
+                        child: Text(
+                          paymentMethodLabel(p['method'] as String? ?? ''),
+                          style: TextStyle(
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                              color: paymentMethodColor(
+                                  p['method'] as String? ?? '')),
+                        ),
+                      ),
+                    )).toList(),
+                  ),
+              ],
+            ),
+          ),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(formatFcfa(amount),
+                  style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      color: kPrimary)),
+              if (createdAt != null)
+                Text(_fmtTime(createdAt),
+                    style: const TextStyle(
+                        fontSize: 11, color: kTextSecondary)),
+            ],
+          ),
+        ]),
+      ),
+    );
+  }
+
+  String _fmtTime(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return DateFormat('HH:mm').format(dt);
+    } catch (_) {
+      return '';
+    }
   }
 }
 
