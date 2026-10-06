@@ -1096,7 +1096,7 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
   late String? _customerId;
   late String? _customerName;
   final Map<String, int> _payments = {
-    'CASH': 0, 'FLOOZ': 0, 'MIXX': 0, 'CREDIT': 0,
+    'CASH': 0, 'FLOOZ': 0, 'MIXX': 0,
   };
   int _discount = 0;
   bool _paying = false;
@@ -1119,11 +1119,6 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
 
   Future<void> _pay() async {
     if (!_canPay) return;
-    if (_payments['CREDIT']! > 0 && _customerId == null) {
-      setState(() =>
-          _error = 'Sélectionnez un client pour une vente à crédit');
-      return;
-    }
     setState(() { _paying = true; _error = null; });
     try {
       final result = await widget.onPay(
@@ -1153,7 +1148,6 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
       _payments['CASH'] = _total;
       _payments['FLOOZ'] = 0;
       _payments['MIXX'] = 0;
-      _payments['CREDIT'] = 0;
     });
   }
 
@@ -1500,13 +1494,6 @@ class _CartSheetState extends ConsumerState<_CartSheet> {
                           value: _payments['MIXX']!,
                           onChanged: (v) =>
                               setState(() => _payments['MIXX'] = v)),
-                      _PayBtn(
-                          label: 'À crédit',
-                          icon: Icons.account_balance_wallet_outlined,
-                          color: kWarning,
-                          value: _payments['CREDIT']!,
-                          onChanged: (v) =>
-                              setState(() => _payments['CREDIT'] = v)),
                     ],
                   ),
 
