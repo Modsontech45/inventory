@@ -1,6 +1,6 @@
 import { Controller, Post, Body, UseGuards, Delete, Param } from '@nestjs/common';
 import { AuthService } from './auth.service.js';
-import { LoginDto, PairDeviceDto, RefreshTokenDto, RegisterDto } from './auth.dto.js';
+import { LoginDto, LoginPinDto, PairDeviceDto, RefreshTokenDto, RegisterDto } from './auth.dto.js';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard.js';
 import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 
@@ -21,6 +21,11 @@ export class AuthController {
   @Post('login')
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);
+  }
+
+  @Post('login/pin')
+  loginPin(@Body() dto: LoginPinDto) {
+    return this.auth.loginPin(dto);
   }
 
   @Post('refresh')

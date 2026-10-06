@@ -95,11 +95,48 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
   String? _customerId;
   String? _customerName;
 
+  bool _canSell = true;
+  bool _canCash = true;
+
   @override
   void initState() {
     super.initState();
     _tabCtrl = TabController(length: 3, vsync: this);
     _tabCtrl.addListener(() => setState(() {}));
+    _loadRoles();
+  }
+
+  Future<void> _loadRoles() async {
+    final api = ApiClient();
+    final vs = await api.getIsVendeur();
+    final cs = await api.getIsCaissier();
+    if (!mounted) return;
+    final newLen = (vs ? 1 : 0) + (cs ? 1 : 0) + 1;
+    if (newLen != _tabCtrl.length) {
+      _tabCtrl.dispose();
+      _tabCtrl = TabController(length: newLen, vsync: this);
+      _tabCtrl.addListener(() => setState(() {}));
+    }
+    setState(() {
+      _canSell = vs;
+      _canCash = cs;
+    });
+  }
+
+  List<Tab> get _tabs {
+    return [
+      if (_canSell) const Tab(icon: Icon(Icons.point_of_sale_outlined, size: 18), text: 'Vente'),
+      if (_canCash) const Tab(icon: Icon(Icons.payments_outlined, size: 18), text: 'Caisse'),
+      const Tab(icon: Icon(Icons.history, size: 18), text: 'Historique'),
+    ];
+  }
+
+  List<Widget> get _tabViews {
+    return [
+      if (_canSell) _buildVenteTab(),
+      if (_canCash) const _CaisseTab(),
+      const _SalesHistoryTab(),
+    ];
   }
 
   @override
@@ -215,20 +252,51 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
     ref.invalidate(_saleProductsProvider);
   }
 
+  Widget _buildVenteTab() {
+    return ref.watch(_saleProductsProvider).when(
+      loading: () => const Center(child: CircularProgressIndicator()),
+      error: (e, _) => _ErrWidget(onRetry: () => ref.invalidate(_saleProductsProvider)),
+      data: (products) => Column(
+        children: [
+          Expanded(
+            child: _ProductBrowser(
+              products: products,
+              query: _query,
+              selectedCatId: _selectedCatId,
+              onQueryChanged: (q) => setState(() => _query = q),
+              onCatChanged: (id) => setState(() => _selectedCatId = id),
+              onAddToCart: _addToCart,
+              qtyInCart: _qtyInCart,
+            ),
+          ),
+          if (_cart.isNotEmpty)
+            _CartBar(
+              itemCount: _itemCount,
+              total: _total,
+              customerName: _customerName,
+              onTap: _openCart,
+            ),
+        ],
+      ),
+    );
+  }
+
+  // True only when the currently visible tab is the Vente tab
+  bool get _onVenteTab => _canSell && _tabCtrl.index == 0;
+
   @override
   Widget build(BuildContext context) {
-    final onPosTab = _tabCtrl.index == 0;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Vente'),
         actions: [
-          if (onPosTab && _cart.isNotEmpty)
+          if (_onVenteTab && _cart.isNotEmpty)
             TextButton.icon(
               onPressed: _clearCart,
               icon: const Icon(Icons.delete_outline, color: Colors.white70),
               label: const Text('Vider', style: TextStyle(color: Colors.white70)),
             ),
-          if (onPosTab && _cart.isNotEmpty)
+          if (_onVenteTab && _cart.isNotEmpty)
             IconButton(
               tooltip: 'Panier',
               onPressed: _openCart,
@@ -253,52 +321,12 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
           indicatorColor: Colors.white,
           labelColor: Colors.white,
           unselectedLabelColor: Colors.white70,
-          tabs: const [
-            Tab(icon: Icon(Icons.point_of_sale_outlined, size: 18), text: 'Vente'),
-            Tab(icon: Icon(Icons.payments_outlined, size: 18), text: 'Caisse'),
-            Tab(icon: Icon(Icons.history, size: 18), text: 'Historique'),
-          ],
+          tabs: _tabs,
         ),
       ),
       body: TabBarView(
         controller: _tabCtrl,
-        children: [
-          // ── Tab 0: POS (vendeur) ────────────────────────────────
-          ref.watch(_saleProductsProvider).when(
-            loading: () => const Center(child: CircularProgressIndicator()),
-            error: (e, _) => _ErrWidget(
-                onRetry: () => ref.invalidate(_saleProductsProvider)),
-            data: (products) => Column(
-              children: [
-                Expanded(
-                  child: _ProductBrowser(
-                    products: products,
-                    query: _query,
-                    selectedCatId: _selectedCatId,
-                    onQueryChanged: (q) => setState(() => _query = q),
-                    onCatChanged: (id) =>
-                        setState(() => _selectedCatId = id),
-                    onAddToCart: _addToCart,
-                    qtyInCart: _qtyInCart,
-                  ),
-                ),
-                if (_cart.isNotEmpty)
-                  _CartBar(
-                    itemCount: _itemCount,
-                    total: _total,
-                    customerName: _customerName,
-                    onTap: _openCart,
-                  ),
-              ],
-            ),
-          ),
-
-          // ── Tab 1: Caisse (caissier) ────────────────────────────
-          const _CaisseTab(),
-
-          // ── Tab 2: History ──────────────────────────────────────
-          const _SalesHistoryTab(),
-        ],
+        children: _tabViews,
       ),
     );
   }

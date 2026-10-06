@@ -1,7 +1,7 @@
 import { Injectable, UnauthorizedException, NotFoundException, BadRequestException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../prisma/prisma.service.js';
-import { LoginDto, PairDeviceDto, RefreshTokenDto, RegisterDto } from './auth.dto.js';
+import { LoginDto, LoginPinDto, PairDeviceDto, RefreshTokenDto, RegisterDto } from './auth.dto.js';
 import * as bcrypt from 'bcrypt';
 import { v4 as uuidv4 } from 'uuid';
 
@@ -13,18 +13,18 @@ export class AuthService {
   ) {}
 
   async register(dto: RegisterDto) {
-    const normalizedPhone = dto.phone.replace(/\s+/g, '');
-    const existing = await this.prisma.user.findFirst({ where: { phone: normalizedPhone } });
-    if (existing) throw new ConflictException('Un compte avec ce numéro existe déjà');
+    const email = dto.email.toLowerCase().trim();
+    const existing = await this.prisma.user.findFirst({ where: { email } });
+    if (existing) throw new ConflictException('Un compte avec cet email existe déjà');
 
     const businessId = uuidv4();
     const depotId = uuidv4();
     const userId = uuidv4();
     const deviceId = uuidv4();
-    const pinHash = await bcrypt.hash(dto.pin, 10);
+    const passwordHash = await bcrypt.hash(dto.password, 10);
 
     await this.prisma.business.create({
-      data: { id: businessId, name: dto.businessName, phone: normalizedPhone },
+      data: { id: businessId, name: dto.businessName, phone: dto.phone },
     });
 
     await this.prisma.depot.create({
@@ -35,9 +35,12 @@ export class AuthService {
       data: {
         id: userId, businessId, depotId,
         name: dto.ownerName,
-        phone: normalizedPhone,
+        email,
+        phone: dto.phone,
         role: 'OWNER' as any,
-        pinHash,
+        passwordHash,
+        isVendeur: true,
+        isCaissier: true,
         active: true,
       },
     });
@@ -46,7 +49,7 @@ export class AuthService {
       data: {
         id: deviceId, businessId, depotId,
         name: dto.deviceName ?? 'Appareil principal',
-        platform: dto.platform ?? 'windows',
+        platform: dto.platform ?? 'android',
         appVersion: '1.0.0',
       },
     });
@@ -58,45 +61,61 @@ export class AuthService {
   }
 
   async login(dto: LoginDto) {
-    const normalizedPhone = dto.phone.replace(/\s+/g, '');
-    const users = await this.prisma.user.findMany({
-      where: { active: true, deleted: false },
+    const email = dto.email.toLowerCase().trim();
+    const user = await this.prisma.user.findFirst({
+      where: { email, active: true, deleted: false },
     });
+    if (!user) throw new UnauthorizedException('Email ou mot de passe incorrect');
+    if (!user.passwordHash) throw new UnauthorizedException('Mot de passe non configuré');
+
+    const valid = await bcrypt.compare(dto.password, user.passwordHash);
+    if (!valid) throw new UnauthorizedException('Email ou mot de passe incorrect');
+
+    return this._finishLogin(user, dto.deviceId, dto.platform, dto.deviceName);
+  }
+
+  // Legacy phone+PIN login kept for backward compat
+  async loginPin(dto: LoginPinDto) {
+    const normalizedPhone = dto.phone.replace(/\s+/g, '');
+    const users = await this.prisma.user.findMany({ where: { active: true, deleted: false } });
     const user = users.find(u => u.phone?.replace(/\s+/g, '') === normalizedPhone);
     if (!user) throw new UnauthorizedException('Numéro ou PIN incorrect');
     if (!user.pinHash) throw new UnauthorizedException('PIN non configuré');
-
     const valid = await bcrypt.compare(dto.pin, user.pinHash);
     if (!valid) throw new UnauthorizedException('Numéro ou PIN incorrect');
+    return this._finishLogin(user, dto.deviceId, dto.platform, dto.deviceName);
+  }
 
-    // Use provided deviceId or auto-create one for this login
-    let deviceId = dto.deviceId;
-    if (deviceId) {
-      const device = await this.prisma.device.findFirst({ where: { id: deviceId, revoked: false } });
-      if (!device) deviceId = undefined;
+  private async _finishLogin(user: any, deviceId?: string, platform?: string, deviceName?: string) {
+    let dId = deviceId;
+    if (dId) {
+      const device = await this.prisma.device.findFirst({ where: { id: dId, revoked: false } });
+      if (!device) dId = undefined;
     }
-
-    if (!deviceId) {
-      deviceId = uuidv4();
+    if (!dId) {
+      dId = uuidv4();
       const depot = await this.prisma.depot.findFirst({ where: { businessId: user.businessId } });
       await this.prisma.device.create({
         data: {
-          id: deviceId,
+          id: dId,
           businessId: user.businessId,
           depotId: depot!.id,
-          name: dto.deviceName ?? 'Appareil',
-          platform: dto.platform ?? 'windows',
+          name: deviceName ?? 'Appareil',
+          platform: platform ?? 'android',
           appVersion: '1.0.0',
         },
       });
     }
-
-    const depot = await this.prisma.device.findUnique({ where: { id: deviceId } });
+    const device = await this.prisma.device.findUnique({ where: { id: dId } });
     return {
-      ...(await this.issueTokens(user.id, deviceId, user.businessId)),
-      deviceId,
+      ...(await this.issueTokens(user.id, dId, user.businessId)),
+      deviceId: dId,
       businessId: user.businessId,
-      depotId: depot?.depotId ?? '',
+      depotId: device?.depotId ?? '',
+      role: user.role,
+      isVendeur: user.isVendeur,
+      isCaissier: user.isCaissier,
+      userName: user.name,
     };
   }
 

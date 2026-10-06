@@ -110,12 +110,20 @@ class ApiClient {
     required String deviceId,
     required String businessId,
     required String depotId,
+    bool isVendeur = false,
+    bool isCaissier = false,
+    String? userName,
+    String? userRole,
   }) async {
     await _storage.write(key: 'access_token', value: accessToken);
     await _storage.write(key: 'refresh_token', value: refreshToken);
     await _storage.write(key: 'device_id', value: deviceId);
     await _storage.write(key: 'business_id', value: businessId);
     await _storage.write(key: 'depot_id', value: depotId);
+    await _storage.write(key: 'is_vendeur', value: isVendeur ? '1' : '0');
+    await _storage.write(key: 'is_caissier', value: isCaissier ? '1' : '0');
+    if (userName != null) await _storage.write(key: 'user_name', value: userName);
+    if (userRole != null) await _storage.write(key: 'user_role', value: userRole);
   }
 
   Future<void> saveServerUrl(String url) =>
@@ -126,6 +134,23 @@ class ApiClient {
   Future<String?> getBusinessId() => _storage.read(key: 'business_id');
   Future<String?> getDepotId() => _storage.read(key: 'depot_id');
   Future<String?> getAccessToken() => _storage.read(key: 'access_token');
+  Future<String?> getUserName() => _storage.read(key: 'user_name');
+  Future<String?> getUserRole() => _storage.read(key: 'user_role');
+
+  Future<bool> getIsVendeur() async {
+    final v = await _storage.read(key: 'is_vendeur');
+    final role = await _storage.read(key: 'user_role');
+    // OWNER and MANAGER can do everything
+    if (role == 'OWNER' || role == 'MANAGER') return true;
+    return v == '1';
+  }
+
+  Future<bool> getIsCaissier() async {
+    final v = await _storage.read(key: 'is_caissier');
+    final role = await _storage.read(key: 'user_role');
+    if (role == 'OWNER' || role == 'MANAGER') return true;
+    return v == '1';
+  }
 
   Future<void> clearAll() async {
     await _storage.deleteAll();

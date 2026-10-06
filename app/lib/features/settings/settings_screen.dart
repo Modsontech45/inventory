@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
 import '../../core/constants/api.dart';
 import '../../data/sync/api_client.dart';
@@ -413,10 +414,15 @@ class _SettingsTile extends StatelessWidget {
 
 // ── Employees sheet ───────────────────────────────────────────────────────────
 
-class _EmployeesSheet extends StatelessWidget {
+class _EmployeesSheet extends ConsumerStatefulWidget {
   final AsyncValue<List<Map<String, dynamic>>> employeesAsync;
   const _EmployeesSheet({required this.employeesAsync});
 
+  @override
+  ConsumerState<_EmployeesSheet> createState() => _EmployeesSheetState();
+}
+
+class _EmployeesSheetState extends ConsumerState<_EmployeesSheet> {
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -441,9 +447,17 @@ class _EmployeesSheet extends StatelessWidget {
             child: Row(children: [
               const Expanded(
                 child: Text('Équipe',
-                    style: TextStyle(
-                        fontSize: 18, fontWeight: FontWeight.w800)),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
               ),
+              FilledButton.icon(
+                onPressed: () => _openAddForm(context),
+                icon: const Icon(Icons.person_add_outlined, size: 18),
+                label: const Text('Ajouter'),
+                style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                    textStyle: const TextStyle(fontSize: 13)),
+              ),
+              const SizedBox(width: 4),
               IconButton(
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close)),
@@ -451,70 +465,69 @@ class _EmployeesSheet extends StatelessWidget {
           ),
           const Divider(height: 1),
           Expanded(
-            child: employeesAsync.when(
-              loading: () =>
-                  const Center(child: CircularProgressIndicator()),
+            child: widget.employeesAsync.when(
+              loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(
-                child: Text('Erreur: $e',
-                    style: const TextStyle(color: kTextSecondary)),
+                child: Text('Erreur: $e', style: const TextStyle(color: kTextSecondary)),
               ),
               data: (employees) => employees.isEmpty
-                  ? const Center(
-                      child: Text('Aucun employé',
-                          style: TextStyle(color: kTextSecondary)))
+                  ? Center(
+                      child: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          const Icon(Icons.people_outline, size: 48, color: kTextSecondary),
+                          const SizedBox(height: 12),
+                          const Text('Aucun employé', style: TextStyle(color: kTextSecondary)),
+                          const SizedBox(height: 16),
+                          FilledButton.icon(
+                            onPressed: () => _openAddForm(context),
+                            icon: const Icon(Icons.person_add_outlined),
+                            label: const Text('Ajouter un employé'),
+                          ),
+                        ],
+                      ),
+                    )
                   : ListView.separated(
                       itemCount: employees.length,
-                      separatorBuilder: (_, __) =>
-                          const Divider(height: 1),
+                      separatorBuilder: (_, __) => const Divider(height: 1),
                       itemBuilder: (_, i) {
                         final emp = employees[i];
                         final name = emp['name'] as String? ?? '';
-                        final role = emp['role'] as String? ?? '';
                         final email = emp['email'] as String? ?? '';
-                        final active =
-                            emp['active'] as bool? ?? true;
-                        final initial = name.isNotEmpty
-                            ? name[0].toUpperCase()
-                            : '?';
+                        final active = emp['active'] as bool? ?? true;
+                        final isVendeur = emp['isVendeur'] as bool? ?? false;
+                        final isCaissier = emp['isCaissier'] as bool? ?? false;
+                        final initial = name.isNotEmpty ? name[0].toUpperCase() : '?';
+
+                        final roleChips = <String>[];
+                        if (isVendeur) roleChips.add('Vendeur');
+                        if (isCaissier) roleChips.add('Caissier');
+                        if (roleChips.isEmpty) roleChips.add(_roleLabel(emp['role'] as String? ?? ''));
 
                         return ListTile(
                           leading: CircleAvatar(
-                            backgroundColor: kPrimary
-                                .withValues(alpha: 0.1),
+                            backgroundColor: kPrimary.withValues(alpha: 0.1),
                             child: Text(initial,
-                                style: const TextStyle(
-                                    color: kPrimary,
-                                    fontWeight: FontWeight.w800)),
+                                style: const TextStyle(color: kPrimary, fontWeight: FontWeight.w800)),
                           ),
                           title: Text(name,
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w700)),
+                              style: const TextStyle(fontWeight: FontWeight.w700)),
                           subtitle: Text(
-                            [
-                              _roleLabel(role),
-                              if (email.isNotEmpty) email,
-                            ].join('  ·  '),
-                            style:
-                                const TextStyle(fontSize: 12),
+                            [roleChips.join(' + '), if (email.isNotEmpty) email].join('  ·  '),
+                            style: const TextStyle(fontSize: 12),
                           ),
                           trailing: Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 4),
+                            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                             decoration: BoxDecoration(
-                              color: active
-                                  ? kSuccess.withValues(alpha: 0.1)
-                                  : Colors.grey.shade200,
-                              borderRadius:
-                                  BorderRadius.circular(8),
+                              color: active ? kSuccess.withValues(alpha: 0.1) : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(8),
                             ),
                             child: Text(
                               active ? 'Actif' : 'Inactif',
                               style: TextStyle(
                                   fontSize: 11,
                                   fontWeight: FontWeight.w700,
-                                  color: active
-                                      ? kSuccess
-                                      : kTextSecondary),
+                                  color: active ? kSuccess : kTextSecondary),
                             ),
                           ),
                         );
@@ -527,14 +540,257 @@ class _EmployeesSheet extends StatelessWidget {
     );
   }
 
+  void _openAddForm(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _AddEmployeeSheet(
+        onCreated: () {
+          ref.invalidate(_employeesProvider);
+        },
+      ),
+    );
+  }
+
   String _roleLabel(String role) {
     const map = {
       'OWNER': 'Propriétaire',
       'MANAGER': 'Gérant',
       'CASHIER': 'Caissier',
-      'STOCK_MANAGER': 'Magasinier',
+      'STOREKEEPER': 'Magasinier',
     };
     return map[role] ?? role;
+  }
+}
+
+// ── Add employee sheet ────────────────────────────────────────────────────────
+
+class _AddEmployeeSheet extends StatefulWidget {
+  final VoidCallback onCreated;
+  const _AddEmployeeSheet({required this.onCreated});
+
+  @override
+  State<_AddEmployeeSheet> createState() => _AddEmployeeSheetState();
+}
+
+class _AddEmployeeSheetState extends State<_AddEmployeeSheet> {
+  final _nameCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  bool _isVendeur = false;
+  bool _isCaissier = false;
+  bool _loading = false;
+  bool _obscure = true;
+  String? _error;
+  final _api = ApiClient();
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final name = _nameCtrl.text.trim();
+    final email = _emailCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    if (name.isEmpty || email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Tous les champs sont obligatoires');
+      return;
+    }
+    if (password.length < 6) {
+      setState(() => _error = 'Mot de passe trop court (6 caractères min.)');
+      return;
+    }
+    if (!_isVendeur && !_isCaissier) {
+      setState(() => _error = 'Sélectionnez au moins un rôle');
+      return;
+    }
+    setState(() { _loading = true; _error = null; });
+    try {
+      await _api.post(Api.users, data: {
+        'id': const Uuid().v4(),
+        'name': name,
+        'email': email,
+        'password': password,
+        'role': 'CASHIER',
+        'isVendeur': _isVendeur,
+        'isCaissier': _isCaissier,
+      });
+      if (mounted) {
+        Navigator.pop(context);
+        widget.onCreated();
+      }
+    } catch (e) {
+      final msg = e.toString().contains('409') || e.toString().contains('Conflict')
+          ? 'Cet email est déjà utilisé'
+          : 'Erreur lors de la création';
+      setState(() => _error = msg);
+    } finally {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+      child: Container(
+        decoration: const BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Center(
+                child: Container(
+                  width: 40, height: 4,
+                  decoration: BoxDecoration(
+                      color: Colors.grey.shade300,
+                      borderRadius: BorderRadius.circular(2)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              const Text('Nouvel employé', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+              const SizedBox(height: 20),
+              TextField(
+                controller: _nameCtrl,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Nom complet *',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _emailCtrl,
+                keyboardType: TextInputType.emailAddress,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Email *',
+                  prefixIcon: Icon(Icons.email_outlined),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _passwordCtrl,
+                obscureText: _obscure,
+                textInputAction: TextInputAction.done,
+                onSubmitted: (_) => _submit(),
+                decoration: InputDecoration(
+                  labelText: 'Mot de passe *',
+                  prefixIcon: const Icon(Icons.lock_outline),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                    onPressed: () => setState(() => _obscure = !_obscure),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Text('Rôle(s)', style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: _RoleToggle(
+                      label: 'Vendeur',
+                      description: 'Crée les commandes',
+                      icon: Icons.point_of_sale_outlined,
+                      selected: _isVendeur,
+                      onChanged: (v) => setState(() => _isVendeur = v),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _RoleToggle(
+                      label: 'Caissier',
+                      description: 'Encaisse les paiements',
+                      icon: Icons.payments_outlined,
+                      selected: _isCaissier,
+                      onChanged: (v) => setState(() => _isCaissier = v),
+                    ),
+                  ),
+                ],
+              ),
+              if (_error != null) ...[
+                const SizedBox(height: 12),
+                Text(_error!, style: const TextStyle(color: kDanger, fontSize: 13)),
+              ],
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _loading ? null : _submit,
+                  icon: _loading
+                      ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                      : const Icon(Icons.check),
+                  label: Text(_loading ? 'Création…' : 'Créer l\'employé'),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _RoleToggle extends StatelessWidget {
+  final String label;
+  final String description;
+  final IconData icon;
+  final bool selected;
+  final ValueChanged<bool> onChanged;
+
+  const _RoleToggle({
+    required this.label,
+    required this.description,
+    required this.icon,
+    required this.selected,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: () => onChanged(!selected),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: selected ? kPrimary.withValues(alpha: 0.08) : Colors.grey.shade100,
+          border: Border.all(
+            color: selected ? kPrimary : Colors.grey.shade300,
+            width: selected ? 2 : 1,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(icon, size: 20, color: selected ? kPrimary : kTextSecondary),
+              const Spacer(),
+              if (selected)
+                const Icon(Icons.check_circle, size: 18, color: kPrimary),
+            ]),
+            const SizedBox(height: 6),
+            Text(label, style: TextStyle(
+                fontWeight: FontWeight.w700,
+                fontSize: 13,
+                color: selected ? kPrimary : kTextPrimary)),
+            Text(description, style: const TextStyle(fontSize: 11, color: kTextSecondary)),
+          ],
+        ),
+      ),
+    );
   }
 }
 

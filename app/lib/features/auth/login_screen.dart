@@ -13,11 +13,19 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-  final _phoneCtrl = TextEditingController();
-  final _pinCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   bool _loading = false;
+  bool _obscure = true;
   String? _error;
   final _api = ApiClient();
+
+  @override
+  void dispose() {
+    _emailCtrl.dispose();
+    _passwordCtrl.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -43,24 +51,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     child: Column(
                       children: [
                         TextField(
-                          controller: _phoneCtrl,
-                          keyboardType: TextInputType.phone,
+                          controller: _emailCtrl,
+                          keyboardType: TextInputType.emailAddress,
+                          textInputAction: TextInputAction.next,
                           decoration: const InputDecoration(
-                            labelText: 'Numéro de téléphone',
-                            prefixIcon: Icon(Icons.person),
-                            hintText: '+228 90 00 00 00',
+                            labelText: 'Adresse email',
+                            prefixIcon: Icon(Icons.email_outlined),
                           ),
                         ),
                         const SizedBox(height: 16),
                         TextField(
-                          controller: _pinCtrl,
-                          obscureText: true,
-                          keyboardType: TextInputType.number,
-                          maxLength: 8,
-                          decoration: const InputDecoration(
-                            labelText: 'Code PIN',
-                            prefixIcon: Icon(Icons.lock),
-                            counterText: '',
+                          controller: _passwordCtrl,
+                          obscureText: _obscure,
+                          textInputAction: TextInputAction.done,
+                          onSubmitted: (_) => _login(),
+                          decoration: InputDecoration(
+                            labelText: 'Mot de passe',
+                            prefixIcon: const Icon(Icons.lock_outline),
+                            suffixIcon: IconButton(
+                              icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                              onPressed: () => setState(() => _obscure = !_obscure),
+                            ),
                           ),
                         ),
                         if (_error != null) ...[
@@ -96,8 +107,10 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   }
 
   Future<void> _login() async {
-    if (_phoneCtrl.text.trim().isEmpty || _pinCtrl.text.isEmpty) {
-      setState(() => _error = 'Renseignez votre numéro et votre PIN');
+    final email = _emailCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Renseignez votre email et votre mot de passe');
       return;
     }
 
@@ -112,8 +125,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     try {
       final res = await _api.post(Api.authLogin, data: {
         'deviceId': deviceId,
-        'phone': _phoneCtrl.text.trim(),
-        'pin': _pinCtrl.text,
+        'email': email,
+        'password': password,
       });
       final body = res.data as Map<String, dynamic>;
       await _api.saveTokens(
@@ -122,10 +135,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         deviceId: deviceId,
         businessId: body['businessId'] as String? ?? await _api.getBusinessId() ?? '',
         depotId: body['depotId'] as String? ?? await _api.getDepotId() ?? '',
+        isVendeur: body['isVendeur'] == true,
+        isCaissier: body['isCaissier'] == true,
+        userName: body['userName'] as String?,
+        userRole: body['role'] as String?,
       );
       if (mounted) context.go('/dashboard');
     } catch (e) {
-      setState(() => _error = 'Numéro ou PIN incorrect');
+      setState(() => _error = 'Email ou mot de passe incorrect');
     } finally {
       if (mounted) setState(() => _loading = false);
     }

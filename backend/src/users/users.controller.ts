@@ -31,7 +31,10 @@ export class UsersController {
   }
 
   @Post()
-  create(@Body() body: { id: string; name: string; phone?: string; role: UserRole; depotId?: string; pin: string; photoUrl?: string }, @CurrentUser() user: any) {
+  create(
+    @Body() body: { id: string; name: string; email?: string; phone?: string; role: UserRole; depotId?: string; password?: string; pin?: string; photoUrl?: string; isVendeur?: boolean; isCaissier?: boolean },
+    @CurrentUser() user: any,
+  ) {
     return this.service.create(body, user.businessId, user.userId, user.deviceId);
   }
 

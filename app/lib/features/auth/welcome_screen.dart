@@ -60,7 +60,7 @@ class _WelcomeScreenState extends State<WelcomeScreen> with SingleTickerProvider
                           tabs: const [Tab(text: 'Connexion'), Tab(text: 'Nouveau compte')],
                         ),
                         SizedBox(
-                          height: 340,
+                          height: 380,
                           child: TabBarView(
                             controller: _tabs,
                             children: [
@@ -91,22 +91,25 @@ class _LoginTab extends StatefulWidget {
 }
 
 class _LoginTabState extends State<_LoginTab> {
-  final _phoneCtrl = TextEditingController();
-  final _pinCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
   bool _loading = false;
+  bool _obscure = true;
   String? _error;
 
   Future<void> _login() async {
-    if (_phoneCtrl.text.trim().isEmpty || _pinCtrl.text.isEmpty) {
-      setState(() => _error = 'Renseignez votre numéro et votre PIN');
+    final email = _emailCtrl.text.trim();
+    final password = _passwordCtrl.text;
+    if (email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Renseignez votre email et votre mot de passe');
       return;
     }
     setState(() { _loading = true; _error = null; });
     try {
       final storedDeviceId = await widget.api.getDeviceId();
       final res = await widget.api.post(Api.authLogin, data: {
-        'phone': _phoneCtrl.text.trim(),
-        'pin': _pinCtrl.text,
+        'email': email,
+        'password': password,
         if (storedDeviceId != null) 'deviceId': storedDeviceId,
         'platform': Platform.isAndroid ? 'android' : 'windows',
         'deviceName': Platform.isAndroid ? 'Mobile Android' : 'PC Windows',
@@ -118,11 +121,15 @@ class _LoginTabState extends State<_LoginTab> {
         deviceId: body['deviceId'] as String,
         businessId: body['businessId'] as String,
         depotId: body['depotId'] as String,
+        isVendeur: body['isVendeur'] == true,
+        isCaissier: body['isCaissier'] == true,
+        userName: body['userName'] as String?,
+        userRole: body['role'] as String?,
       );
       if (mounted) context.go('/dashboard');
     } catch (e) {
       final msg = e.toString().contains('401') || e.toString().contains('Unauthorized')
-          ? 'Numéro ou PIN incorrect'
+          ? 'Email ou mot de passe incorrect'
           : 'Erreur réseau — vérifiez votre connexion';
       setState(() => _error = msg);
     } finally {
@@ -137,25 +144,26 @@ class _LoginTabState extends State<_LoginTab> {
       child: Column(
         children: [
           TextField(
-            controller: _phoneCtrl,
-            keyboardType: TextInputType.phone,
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
             decoration: const InputDecoration(
-              labelText: 'Numéro de téléphone',
-              prefixIcon: Icon(Icons.phone),
-              hintText: '+228 90 00 00 00',
+              labelText: 'Adresse email',
+              prefixIcon: Icon(Icons.email_outlined),
             ),
           ),
           const SizedBox(height: 14),
           TextField(
-            controller: _pinCtrl,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            maxLength: 8,
+            controller: _passwordCtrl,
+            obscureText: _obscure,
             onSubmitted: (_) => _login(),
-            decoration: const InputDecoration(
-              labelText: 'Code PIN',
-              prefixIcon: Icon(Icons.lock),
-              counterText: '',
+            decoration: InputDecoration(
+              labelText: 'Mot de passe',
+              prefixIcon: const Icon(Icons.lock_outline),
+              suffixIcon: IconButton(
+                icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                onPressed: () => setState(() => _obscure = !_obscure),
+              ),
             ),
           ),
           if (_error != null) ...[
@@ -191,20 +199,27 @@ class _RegisterTabState extends State<_RegisterTab> {
   final _businessCtrl = TextEditingController();
   final _depotCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _pinCtrl = TextEditingController();
-  final _pinConfirmCtrl = TextEditingController();
+  final _emailCtrl = TextEditingController();
+  final _passwordCtrl = TextEditingController();
+  final _passwordConfirmCtrl = TextEditingController();
   bool _loading = false;
+  bool _obscure = true;
   String? _error;
 
   Future<void> _register() async {
+    final email = _emailCtrl.text.trim();
+    final password = _passwordCtrl.text;
     if (_businessCtrl.text.trim().isEmpty || _nameCtrl.text.trim().isEmpty ||
-        _phoneCtrl.text.trim().isEmpty || _pinCtrl.text.isEmpty) {
-      setState(() => _error = 'Renseignez tous les champs');
+        email.isEmpty || password.isEmpty) {
+      setState(() => _error = 'Renseignez tous les champs obligatoires');
       return;
     }
-    if (_pinCtrl.text != _pinConfirmCtrl.text) {
-      setState(() => _error = 'Les PIN ne correspondent pas');
+    if (password.length < 6) {
+      setState(() => _error = 'Mot de passe trop court (6 caractères minimum)');
+      return;
+    }
+    if (password != _passwordConfirmCtrl.text) {
+      setState(() => _error = 'Les mots de passe ne correspondent pas');
       return;
     }
     setState(() { _loading = true; _error = null; });
@@ -213,8 +228,8 @@ class _RegisterTabState extends State<_RegisterTab> {
         'businessName': _businessCtrl.text.trim(),
         'depotName': _depotCtrl.text.trim().isEmpty ? 'Dépôt principal' : _depotCtrl.text.trim(),
         'ownerName': _nameCtrl.text.trim(),
-        'phone': _phoneCtrl.text.trim(),
-        'pin': _pinCtrl.text,
+        'email': email,
+        'password': password,
         'platform': Platform.isAndroid ? 'android' : 'windows',
         'deviceName': Platform.isAndroid ? 'Mobile Android' : 'PC Windows',
       });
@@ -225,11 +240,15 @@ class _RegisterTabState extends State<_RegisterTab> {
         deviceId: body['deviceId'] as String,
         businessId: body['businessId'] as String,
         depotId: body['depotId'] as String,
+        isVendeur: true,
+        isCaissier: true,
+        userRole: 'OWNER',
+        userName: _nameCtrl.text.trim(),
       );
       if (mounted) context.go('/dashboard');
     } catch (e) {
       final msg = e.toString().contains('409') || e.toString().contains('Conflict')
-          ? 'Ce numéro est déjà utilisé'
+          ? 'Cet email est déjà utilisé'
           : e.toString().contains('connectTimeout') || e.toString().contains('SocketException')
               ? 'Impossible de contacter le serveur'
               : 'Erreur: vérifiez vos informations';
@@ -261,26 +280,34 @@ class _RegisterTabState extends State<_RegisterTab> {
           ),
           const SizedBox(height: 10),
           TextField(
-            controller: _phoneCtrl,
-            keyboardType: TextInputType.phone,
-            decoration: const InputDecoration(labelText: 'Numéro de téléphone *', prefixIcon: Icon(Icons.phone), hintText: '+228 90 00 00 00'),
+            controller: _emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(labelText: 'Adresse email *', prefixIcon: Icon(Icons.email_outlined)),
           ),
           const SizedBox(height: 10),
           TextField(
-            controller: _pinCtrl,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            maxLength: 8,
-            decoration: const InputDecoration(labelText: 'PIN (4-8 chiffres) *', prefixIcon: Icon(Icons.lock), counterText: ''),
+            controller: _passwordCtrl,
+            obscureText: _obscure,
+            textInputAction: TextInputAction.next,
+            decoration: InputDecoration(
+              labelText: 'Mot de passe *',
+              prefixIcon: const Icon(Icons.lock_outline),
+              suffixIcon: IconButton(
+                icon: Icon(_obscure ? Icons.visibility_outlined : Icons.visibility_off_outlined),
+                onPressed: () => setState(() => _obscure = !_obscure),
+              ),
+            ),
           ),
           const SizedBox(height: 10),
           TextField(
-            controller: _pinConfirmCtrl,
-            obscureText: true,
-            keyboardType: TextInputType.number,
-            maxLength: 8,
+            controller: _passwordConfirmCtrl,
+            obscureText: _obscure,
             onSubmitted: (_) => _register(),
-            decoration: const InputDecoration(labelText: 'Confirmer le PIN *', prefixIcon: Icon(Icons.lock_outline), counterText: ''),
+            decoration: const InputDecoration(
+              labelText: 'Confirmer le mot de passe *',
+              prefixIcon: Icon(Icons.lock_outline),
+            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 8),

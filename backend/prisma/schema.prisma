@@ -250,12 +250,16 @@ model User {
   business   Business @relation(fields: [businessId], references: [id])
   depotId    String?  @db.Uuid
   depot      Depot?   @relation(fields: [depotId], references: [id])
-  name       String
-  phone      String?
-  role       UserRole @default(CASHIER)
-  pinHash    String?
-  photoUrl   String?
-  active     Boolean  @default(true)
+  name         String
+  phone        String?
+  email        String?  @unique
+  passwordHash String?
+  role         UserRole @default(CASHIER)
+  pinHash      String?
+  photoUrl     String?
+  isVendeur    Boolean  @default(false)
+  isCaissier   Boolean  @default(false)
+  active       Boolean  @default(true)
   deleted    Boolean  @default(false)
   permissions Json?
   createdAt  DateTime @default(now())

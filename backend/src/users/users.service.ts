@@ -10,7 +10,7 @@ export class UsersService {
   async findAll(businessId: string) {
     return this.prisma.user.findMany({
       where: { businessId, deleted: false },
-      select: { id: true, name: true, phone: true, role: true, depotId: true, photoUrl: true, active: true, createdAt: true },
+      select: { id: true, name: true, phone: true, email: true, role: true, depotId: true, photoUrl: true, active: true, isVendeur: true, isCaissier: true, createdAt: true },
       orderBy: { name: 'asc' },
     });
   }
@@ -18,7 +18,7 @@ export class UsersService {
   async findMe(userId: string, businessId: string) {
     const user = await this.prisma.user.findFirst({
       where: { id: userId, businessId, deleted: false },
-      select: { id: true, name: true, phone: true, role: true, photoUrl: true, active: true },
+      select: { id: true, name: true, phone: true, email: true, role: true, photoUrl: true, active: true, isVendeur: true, isCaissier: true },
     });
     if (!user) throw new NotFoundException('Utilisateur introuvable');
 
@@ -37,22 +37,35 @@ export class UsersService {
     });
   }
 
-  async create(data: { id: string; name: string; phone?: string; role: UserRole; depotId?: string; pin: string; photoUrl?: string }, businessId: string, createdBy: string, deviceId: string) {
-    const pinHash = await bcrypt.hash(data.pin, 10);
+  async create(
+    data: { id: string; name: string; email?: string; phone?: string; role: UserRole; depotId?: string; password?: string; pin?: string; photoUrl?: string; isVendeur?: boolean; isCaissier?: boolean },
+    businessId: string, createdBy: string, deviceId: string,
+  ) {
+    if (!data.email && !data.phone) throw new ConflictException('Email ou téléphone requis');
+    if (data.email) {
+      const existing = await this.prisma.user.findFirst({ where: { email: data.email.toLowerCase().trim() } });
+      if (existing) throw new ConflictException('Un utilisateur avec cet email existe déjà');
+    }
+    const passwordHash = data.password ? await bcrypt.hash(data.password, 10) : undefined;
+    const pinHash = data.pin ? await bcrypt.hash(data.pin, 10) : undefined;
     return this.prisma.user.create({
       data: {
         id: data.id,
         businessId,
         name: data.name,
+        email: data.email ? data.email.toLowerCase().trim() : undefined,
         phone: data.phone,
         role: data.role,
         depotId: data.depotId,
+        passwordHash,
         pinHash,
         photoUrl: data.photoUrl,
+        isVendeur: data.isVendeur ?? false,
+        isCaissier: data.isCaissier ?? false,
         createdBy,
         deviceId,
       },
-      select: { id: true, name: true, phone: true, role: true, depotId: true, photoUrl: true, active: true },
+      select: { id: true, name: true, email: true, phone: true, role: true, depotId: true, photoUrl: true, active: true, isVendeur: true, isCaissier: true },
     });
   }
 
@@ -63,13 +76,17 @@ export class UsersService {
     const updates: any = {};
     if (data.name) updates.name = data.name;
     if (data.phone !== undefined) updates.phone = data.phone;
+    if (data.email !== undefined) updates.email = data.email?.toLowerCase().trim();
     if (data.role) updates.role = data.role;
     if (data.depotId !== undefined) updates.depotId = data.depotId;
     if (data.photoUrl !== undefined) updates.photoUrl = data.photoUrl;
     if (data.active !== undefined) updates.active = data.active;
     if (data.pin) updates.pinHash = await bcrypt.hash(data.pin, 10);
+    if (data.password) updates.passwordHash = await bcrypt.hash(data.password, 10);
+    if (data.isVendeur !== undefined) updates.isVendeur = data.isVendeur;
+    if (data.isCaissier !== undefined) updates.isCaissier = data.isCaissier;
 
-    return this.prisma.user.update({ where: { id }, data: updates, select: { id: true, name: true, phone: true, role: true, depotId: true, active: true } });
+    return this.prisma.user.update({ where: { id }, data: updates, select: { id: true, name: true, email: true, phone: true, role: true, depotId: true, active: true, isVendeur: true, isCaissier: true } });
   }
 
   async generatePairingCode(businessId: string, depotId: string) {
