@@ -272,6 +272,9 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
     final currentQty = widget.item['cachedQty'] as int? ?? 0;
     final unitName = base?['name'] as String? ?? 'u';
 
+    final delta = int.tryParse(_qtyCtrl.text.trim()) ?? 0;
+    final newQty = _isEntry ? currentQty + delta : currentQty - delta;
+
     return Container(
       decoration: const BoxDecoration(
         color: Colors.white,
@@ -287,16 +290,53 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
         children: [
           Row(children: [
             Expanded(
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(prod['name'] as String? ?? '',
-                    style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
-                Text('Stock actuel : $currentQty $unitName',
-                    style: const TextStyle(fontSize: 13, color: kTextSecondary)),
-              ]),
+              child: Text(prod['name'] as String? ?? '',
+                  style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w800)),
             ),
             IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
           ]),
-          const Divider(height: 24),
+          const SizedBox(height: 8),
+
+          // Current → New stock preview card
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+            decoration: BoxDecoration(
+              color: Colors.grey.shade50,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: Colors.grey.shade200),
+            ),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.spaceAround,
+              children: [
+                Column(children: [
+                  const Text('Actuel', style: TextStyle(fontSize: 11, color: kTextSecondary)),
+                  const SizedBox(height: 2),
+                  Text('$currentQty',
+                      style: TextStyle(
+                        fontSize: 28, fontWeight: FontWeight.w900,
+                        color: currentQty > 0 ? kSuccess : kDanger,
+                      )),
+                  Text(unitName, style: const TextStyle(fontSize: 12, color: kTextSecondary)),
+                ]),
+                Icon(Icons.arrow_forward,
+                    color: delta > 0 ? (_isEntry ? kSuccess : kDanger) : Colors.grey.shade400),
+                Column(children: [
+                  const Text('Après', style: TextStyle(fontSize: 11, color: kTextSecondary)),
+                  const SizedBox(height: 2),
+                  Text(delta > 0 ? '$newQty' : '—',
+                      style: TextStyle(
+                        fontSize: 28, fontWeight: FontWeight.w900,
+                        color: delta == 0
+                            ? Colors.grey.shade400
+                            : (newQty > 0 ? kSuccess : kDanger),
+                      )),
+                  Text(unitName, style: const TextStyle(fontSize: 12, color: kTextSecondary)),
+                ]),
+              ],
+            ),
+          ),
+          const SizedBox(height: 14),
 
           // Entry / Exit toggle
           Row(children: [
@@ -344,16 +384,20 @@ class _AdjustStockSheetState extends State<_AdjustStockSheet> {
               ),
             ),
           ]),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
 
           TextField(
             controller: _qtyCtrl,
             keyboardType: TextInputType.number,
             autofocus: true,
+            onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
               labelText: 'Quantité ($unitName) *',
-              prefixIcon: Icon(_isEntry ? Icons.add : Icons.remove,
-                  color: _isEntry ? kSuccess : kDanger),
+              prefixIcon: Icon(
+                _isEntry ? Icons.add : Icons.remove,
+                color: _isEntry ? kSuccess : kDanger,
+              ),
+              suffixText: unitName,
             ),
           ),
           const SizedBox(height: 10),
