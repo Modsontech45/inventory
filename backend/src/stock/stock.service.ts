@@ -7,25 +7,37 @@ export class StockService {
   constructor(private prisma: PrismaService) {}
 
   async getCurrentStock(businessId: string, depotId?: string) {
-    const levels = await this.prisma.productStockLevel.findMany({
-      where: { businessId, ...(depotId ? { depotId } : {}) },
+    // Query products directly so every product appears even without a stock level yet
+    const products = await this.prisma.product.findMany({
+      where: { businessId, archived: false, deleted: false },
       include: {
-        product: {
-          include: {
-            units: { where: { deleted: false, isBase: true } },
-            category: { select: { name: true } },
-          },
-        },
-        depot: { select: { id: true, name: true } },
+        units: { where: { deleted: false, isBase: true } },
+        category: { select: { name: true } },
+        stockLevels: depotId
+          ? { where: { depotId }, include: { depot: { select: { id: true, name: true } } } }
+          : { include: { depot: { select: { id: true, name: true } } } },
       },
-      orderBy: { product: { name: 'asc' } },
+      orderBy: { name: 'asc' },
     });
 
-    return levels.map((l) => ({
-      ...l,
-      isLowStock: l.cachedQty <= l.minLevel && l.minLevel > 0,
-      isOutOfStock: l.cachedQty <= 0,
-    }));
+    return products.map((p) => {
+      const { stockLevels, ...product } = p;
+      const levels = stockLevels as any[];
+
+      if (levels.length === 0) {
+        return { id: null, productId: p.id, businessId, cachedQty: 0, minLevel: 0, product, depot: null, isLowStock: false, isOutOfStock: true };
+      }
+
+      if (depotId) {
+        const lvl = levels[0];
+        return { ...lvl, product, isLowStock: lvl.cachedQty <= lvl.minLevel && lvl.minLevel > 0, isOutOfStock: lvl.cachedQty <= 0 };
+      }
+
+      // No depot filter — aggregate across all depots
+      const totalQty = levels.reduce((sum: number, l: any) => sum + (l.cachedQty ?? 0), 0);
+      const maxMin = levels.length ? Math.max(...levels.map((l: any) => l.minLevel ?? 0)) : 0;
+      return { id: levels[0].id, productId: p.id, businessId, cachedQty: totalQty, minLevel: maxMin, product, depot: null, isLowStock: totalQty <= maxMin && maxMin > 0, isOutOfStock: totalQty <= 0 };
+    });
   }
 
   async getMovements(businessId: string, filters: { depotId?: string; productId?: string; from?: string; to?: string; page?: number }) {

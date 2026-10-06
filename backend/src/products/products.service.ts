@@ -52,6 +52,16 @@ export class ProductsService {
       include: { units: true },
     });
 
+    // Create an initial stock level (qty=0) for each depot in this business
+    const depots = await this.prisma.depot.findMany({ where: { businessId } });
+    for (const depot of depots) {
+      await this.prisma.productStockLevel.upsert({
+        where: { productId_depotId: { productId: product.id, depotId: depot.id } },
+        create: { id: crypto.randomUUID(), businessId, productId: product.id, depotId: depot.id, cachedQty: 0, minLevel: minStockLevel ?? 0 },
+        update: {},
+      });
+    }
+
     return product;
   }
 
