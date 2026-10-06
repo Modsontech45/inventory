@@ -5,6 +5,17 @@ import { CurrentUser } from '../common/decorators/current-user.decorator.js';
 import { UserRole } from '@prisma/client';
 
 @UseGuards(JwtAuthGuard)
+@Controller('api/v1/depots')
+export class DepotsController {
+  constructor(private service: UsersService) {}
+
+  @Get()
+  findAll(@CurrentUser() user: any) {
+    return this.service.findDepots(user.businessId);
+  }
+}
+
+@UseGuards(JwtAuthGuard)
 @Controller('api/v1/users')
 export class UsersController {
   constructor(private service: UsersService) {}
@@ -12,6 +23,11 @@ export class UsersController {
   @Get()
   findAll(@CurrentUser() user: any) {
     return this.service.findAll(user.businessId);
+  }
+
+  @Get('me')
+  findMe(@CurrentUser() user: any) {
+    return this.service.findMe(user.userId, user.businessId);
   }
 
   @Post()

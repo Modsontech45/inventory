@@ -14,6 +14,7 @@ class Api {
   static const String stock = 'stock';
   static const String customers = 'customers';
   static const String users = 'users';
+  static const String depots = 'depots';
   static const String syncPush = 'sync/push';
   static const String syncPull = 'sync/pull';
   static const String dashboard = 'dashboard';

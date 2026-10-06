@@ -15,6 +15,28 @@ export class UsersService {
     });
   }
 
+  async findMe(userId: string, businessId: string) {
+    const user = await this.prisma.user.findFirst({
+      where: { id: userId, businessId, deleted: false },
+      select: { id: true, name: true, phone: true, role: true, photoUrl: true, active: true },
+    });
+    if (!user) throw new NotFoundException('Utilisateur introuvable');
+
+    const [business, depot] = await Promise.all([
+      this.prisma.business.findUnique({ where: { id: businessId }, select: { id: true, name: true, currency: true } }),
+      this.prisma.depot.findFirst({ where: { businessId }, select: { id: true, name: true } }),
+    ]);
+
+    return { ...user, business, depot };
+  }
+
+  async findDepots(businessId: string) {
+    return this.prisma.depot.findMany({
+      where: { businessId },
+      orderBy: { name: 'asc' },
+    });
+  }
+
   async create(data: { id: string; name: string; phone?: string; role: UserRole; depotId?: string; pin: string; photoUrl?: string }, businessId: string, createdBy: string, deviceId: string) {
     const pinHash = await bcrypt.hash(data.pin, 10);
     return this.prisma.user.create({
