@@ -1717,6 +1717,7 @@ class _PendingOrderCardState extends ConsumerState<_PendingOrderCard> {
     final createdAt = o['createdAt'] as String?;
 
     return Container(
+      width: double.infinity,
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(14),
