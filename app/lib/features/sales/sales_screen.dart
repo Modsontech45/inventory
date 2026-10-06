@@ -174,7 +174,6 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
     String? customerId,
   }) async {
     final api = ref.read(_apiProvSales);
-    final deviceId = await api.getDeviceId() ?? '';
     final depotId = await api.getDepotId() ?? '';
     const uuid = Uuid();
 
