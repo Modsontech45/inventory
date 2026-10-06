@@ -20,9 +20,40 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`ENVentory API running on port ${port}`);
 
+  const prisma = app.get(PrismaService);
+
+  // Create units table if it doesn't exist yet (avoids needing prisma db push at build time)
+  try {
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "units" (
+        "id"         UUID        NOT NULL DEFAULT gen_random_uuid(),
+        "businessId" UUID        NOT NULL,
+        "name"       TEXT        NOT NULL,
+        "deleted"    BOOLEAN     NOT NULL DEFAULT false,
+        "createdAt"  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt"  TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        CONSTRAINT "units_pkey" PRIMARY KEY ("id")
+      )
+    `);
+    await prisma.$executeRawUnsafe(`
+      DO $$ BEGIN
+        ALTER TABLE "units"
+          ADD CONSTRAINT "units_businessId_fkey"
+          FOREIGN KEY ("businessId") REFERENCES "businesses"("id")
+          ON DELETE RESTRICT ON UPDATE CASCADE;
+      EXCEPTION WHEN duplicate_object THEN NULL;
+      END $$
+    `);
+    await prisma.$executeRawUnsafe(`
+      CREATE UNIQUE INDEX IF NOT EXISTS "units_businessId_name_key"
+        ON "units"("businessId", "name")
+    `);
+  } catch (e) {
+    console.error('⚠️  Could not ensure units table:', e);
+  }
+
   // Auto-generate a pairing code on startup for easy first-device setup
   try {
-    const prisma = app.get(PrismaService);
     const depot = await prisma.depot.findFirst();
     const business = depot ? await prisma.business.findUnique({ where: { id: depot.businessId } }) : null;
 
