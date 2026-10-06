@@ -199,6 +199,7 @@ class _RegisterTabState extends State<_RegisterTab> {
   final _businessCtrl = TextEditingController();
   final _depotCtrl = TextEditingController();
   final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _passwordConfirmCtrl = TextEditingController();
@@ -230,6 +231,7 @@ class _RegisterTabState extends State<_RegisterTab> {
         'ownerName': _nameCtrl.text.trim(),
         'email': email,
         'password': password,
+        if (_phoneCtrl.text.trim().isNotEmpty) 'phone': _phoneCtrl.text.trim(),
         'platform': Platform.isAndroid ? 'android' : 'windows',
         'deviceName': Platform.isAndroid ? 'Mobile Android' : 'PC Windows',
       });
@@ -277,6 +279,17 @@ class _RegisterTabState extends State<_RegisterTab> {
           TextField(
             controller: _nameCtrl,
             decoration: const InputDecoration(labelText: 'Votre nom *', prefixIcon: Icon(Icons.person)),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _phoneCtrl,
+            keyboardType: TextInputType.phone,
+            textInputAction: TextInputAction.next,
+            decoration: const InputDecoration(
+              labelText: 'Numéro WhatsApp',
+              prefixIcon: Icon(Icons.phone),
+              hintText: '+228 90 00 00 00',
+            ),
           ),
           const SizedBox(height: 10),
           TextField(

@@ -494,6 +494,7 @@ class _EmployeesSheetState extends ConsumerState<_EmployeesSheet> {
                         final emp = employees[i];
                         final name = emp['name'] as String? ?? '';
                         final email = emp['email'] as String? ?? '';
+                        final phone = emp['phone'] as String? ?? '';
                         final active = emp['active'] as bool? ?? true;
                         final isVendeur = emp['isVendeur'] as bool? ?? false;
                         final isCaissier = emp['isCaissier'] as bool? ?? false;
@@ -504,6 +505,8 @@ class _EmployeesSheetState extends ConsumerState<_EmployeesSheet> {
                         if (isCaissier) roleChips.add('Caissier');
                         if (roleChips.isEmpty) roleChips.add(_roleLabel(emp['role'] as String? ?? ''));
 
+                        final contact = phone.isNotEmpty ? phone : email;
+
                         return ListTile(
                           leading: CircleAvatar(
                             backgroundColor: kPrimary.withValues(alpha: 0.1),
@@ -513,7 +516,7 @@ class _EmployeesSheetState extends ConsumerState<_EmployeesSheet> {
                           title: Text(name,
                               style: const TextStyle(fontWeight: FontWeight.w700)),
                           subtitle: Text(
-                            [roleChips.join(' + '), if (email.isNotEmpty) email].join('  ·  '),
+                            [roleChips.join(' + '), if (contact.isNotEmpty) contact].join('  ·  '),
                             style: const TextStyle(fontSize: 12),
                           ),
                           trailing: Container(
@@ -576,6 +579,7 @@ class _AddEmployeeSheet extends StatefulWidget {
 
 class _AddEmployeeSheetState extends State<_AddEmployeeSheet> {
   final _nameCtrl = TextEditingController();
+  final _phoneCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _isVendeur = false;
@@ -588,6 +592,7 @@ class _AddEmployeeSheetState extends State<_AddEmployeeSheet> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _phoneCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     super.dispose();
@@ -616,6 +621,7 @@ class _AddEmployeeSheetState extends State<_AddEmployeeSheet> {
         'name': name,
         'email': email,
         'password': password,
+        if (_phoneCtrl.text.trim().isNotEmpty) 'phone': _phoneCtrl.text.trim(),
         'role': 'CASHIER',
         'isVendeur': _isVendeur,
         'isCaissier': _isCaissier,
@@ -666,6 +672,17 @@ class _AddEmployeeSheetState extends State<_AddEmployeeSheet> {
                 decoration: const InputDecoration(
                   labelText: 'Nom complet *',
                   prefixIcon: Icon(Icons.person_outline),
+                ),
+              ),
+              const SizedBox(height: 14),
+              TextField(
+                controller: _phoneCtrl,
+                keyboardType: TextInputType.phone,
+                textInputAction: TextInputAction.next,
+                decoration: const InputDecoration(
+                  labelText: 'Numéro WhatsApp',
+                  prefixIcon: Icon(Icons.phone),
+                  hintText: '+228 90 00 00 00',
                 ),
               ),
               const SizedBox(height: 14),
