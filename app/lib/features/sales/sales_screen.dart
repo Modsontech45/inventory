@@ -186,6 +186,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen>
               'unitId': c.unitId,
               'qty': c.qty,
               'unitPrice': c.unitPrice,
+              'discount': 0,
               'lineTotal': c.lineTotal,
             })
         .toList();
