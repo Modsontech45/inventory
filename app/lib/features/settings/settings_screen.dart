@@ -472,7 +472,7 @@ class _EmployeesSheet extends StatelessWidget {
                         final role = emp['role'] as String? ?? '';
                         final email = emp['email'] as String? ?? '';
                         final active =
-                            emp['isActive'] as bool? ?? true;
+                            emp['active'] as bool? ?? true;
                         final initial = name.isNotEmpty
                             ? name[0].toUpperCase()
                             : '?';

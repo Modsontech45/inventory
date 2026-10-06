@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:uuid/uuid.dart';
 import '../../core/theme/app_theme.dart';
 import '../../data/sync/api_client.dart';
@@ -2146,6 +2147,15 @@ class _SaleHistoryCard extends StatelessWidget {
   final Map<String, dynamic> sale;
   const _SaleHistoryCard({required this.sale});
 
+  void _openDetail(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (_) => _SaleDetailSheet(sale: sale),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final amount = sale['totalAmount'] as int? ?? 0;
@@ -2166,7 +2176,10 @@ class _SaleHistoryCard extends StatelessWidget {
       elevation: 1,
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(12)),
-      child: Padding(
+      child: InkWell(
+        onTap: () => _openDetail(context),
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(children: [
           // Method color bar
@@ -2259,6 +2272,7 @@ class _SaleHistoryCard extends StatelessWidget {
             ],
           ),
         ]),
+        ),
       ),
     );
   }
@@ -2267,6 +2281,243 @@ class _SaleHistoryCard extends StatelessWidget {
     try {
       final dt = DateTime.parse(iso).toLocal();
       return DateFormat('HH:mm').format(dt);
+    } catch (_) {
+      return '';
+    }
+  }
+}
+
+// ── Sale detail sheet ─────────────────────────────────────────────────────────
+
+class _SaleDetailSheet extends StatelessWidget {
+  final Map<String, dynamic> sale;
+  const _SaleDetailSheet({required this.sale});
+
+  @override
+  Widget build(BuildContext context) {
+    final amount = sale['totalAmount'] as int? ?? 0;
+    final number = sale['number'] as String? ?? '';
+    final createdAt = sale['createdAt'] as String?;
+    final customer = sale['customer'] as Map?;
+    final seller = sale['seller'] as String? ?? '';
+    final lines = (sale['lines'] as List?)?.cast<Map>() ?? [];
+    final payments = (sale['payments'] as List?)?.cast<Map>() ?? [];
+    final discount = sale['discountAmount'] as int? ?? 0;
+
+    return Container(
+      height: MediaQuery.of(context).size.height * 0.85,
+      decoration: const BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      child: Column(
+        children: [
+          // Handle
+          Center(
+            child: Container(
+              width: 40, height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 4),
+              decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2)),
+            ),
+          ),
+
+          // Header
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 8, 0),
+            child: Row(children: [
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      number.isNotEmpty ? 'Vente $number' : 'Vente',
+                      style: const TextStyle(
+                          fontSize: 18, fontWeight: FontWeight.w900),
+                    ),
+                    if (createdAt != null)
+                      Text(
+                        _fmtDate(createdAt),
+                        style: const TextStyle(
+                            fontSize: 12, color: kTextSecondary),
+                      ),
+                  ],
+                ),
+              ),
+              // Share button
+              IconButton(
+                onPressed: () => _share(context),
+                icon: const Icon(Icons.share_outlined),
+                tooltip: 'Partager',
+              ),
+              IconButton(
+                  onPressed: () => Navigator.pop(context),
+                  icon: const Icon(Icons.close)),
+            ]),
+          ),
+
+          // Customer + seller
+          if (customer != null || seller.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+              child: Row(children: [
+                if (customer != null) ...[
+                  const Icon(Icons.person_outline,
+                      size: 14, color: kTextSecondary),
+                  const SizedBox(width: 4),
+                  Text(
+                    customer['name'] as String? ?? 'Client anonyme',
+                    style: const TextStyle(
+                        fontSize: 13, fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(width: 12),
+                ],
+                if (seller.isNotEmpty) ...[
+                  const Icon(Icons.store_outlined,
+                      size: 14, color: kTextSecondary),
+                  const SizedBox(width: 4),
+                  Text(seller,
+                      style: const TextStyle(
+                          fontSize: 13, color: kTextSecondary)),
+                ],
+              ]),
+            ),
+
+          const Divider(height: 1),
+
+          // Lines
+          Expanded(
+            child: lines.isEmpty
+                ? const Center(
+                    child: Text('Détails non disponibles',
+                        style: TextStyle(color: kTextSecondary)))
+                : ListView.builder(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    itemCount: lines.length,
+                    itemBuilder: (_, i) {
+                      final line = lines[i];
+                      final productName = (line['product'] as Map?)?['name']
+                              as String? ??
+                          line['productName'] as String? ?? '';
+                      final unitName = (line['unit'] as Map?)?['name']
+                              as String? ??
+                          line['unitName'] as String? ?? '';
+                      final qty = line['qty'] as int? ?? 0;
+                      final unitPrice = line['unitPrice'] as int? ?? 0;
+                      final lineTotal = line['lineTotal'] as int? ?? 0;
+
+                      return Padding(
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(children: [
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment:
+                                  CrossAxisAlignment.start,
+                              children: [
+                                Text(productName,
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                        fontSize: 14)),
+                                Text(
+                                  '$qty $unitName × ${formatFcfa(unitPrice)}',
+                                  style: const TextStyle(
+                                      fontSize: 12,
+                                      color: kTextSecondary),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Text(
+                            formatFcfa(lineTotal),
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 14,
+                                color: kPrimary),
+                          ),
+                        ]),
+                      );
+                    },
+                  ),
+          ),
+
+          const Divider(height: 1),
+
+          // Totals + payments
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+            child: Column(
+              children: [
+                if (discount > 0)
+                  _TotalRow('Remise', discount,
+                      style: const TextStyle(
+                          fontSize: 13,
+                          color: kWarning,
+                          fontWeight: FontWeight.w600)),
+                _TotalRow('TOTAL', amount,
+                    style: const TextStyle(
+                        fontSize: 16,
+                        color: kPrimary,
+                        fontWeight: FontWeight.w900)),
+                const SizedBox(height: 8),
+                ...payments.map((p) {
+                  final method = p['method'] as String? ?? '';
+                  return _TotalRow(
+                    paymentMethodLabel(method),
+                    p['amount'] as int? ?? 0,
+                    style: TextStyle(
+                        fontSize: 13,
+                        color: paymentMethodColor(method),
+                        fontWeight: FontWeight.w700),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _share(BuildContext context) {
+    final number = sale['number'] as String? ?? '';
+    final amount = sale['totalAmount'] as int? ?? 0;
+    final createdAt = sale['createdAt'] as String?;
+    final customer = sale['customer'] as Map?;
+    final lines = (sale['lines'] as List?)?.cast<Map>() ?? [];
+    final payments = (sale['payments'] as List?)?.cast<Map>() ?? [];
+
+    final sb = StringBuffer();
+    sb.writeln('🧾 Reçu ENVentory');
+    if (number.isNotEmpty) sb.writeln('N° $number');
+    if (createdAt != null) sb.writeln(_fmtDate(createdAt));
+    if (customer != null) {
+      sb.writeln('Client: ${customer['name'] ?? 'Anonyme'}');
+    }
+    sb.writeln('');
+    for (final line in lines) {
+      final name = (line['product'] as Map?)?['name'] as String? ??
+          line['productName'] as String? ?? '';
+      final qty = line['qty'] as int? ?? 0;
+      final unit = (line['unit'] as Map?)?['name'] as String? ?? '';
+      final price = line['lineTotal'] as int? ?? 0;
+      sb.writeln('• $qty $unit $name → ${formatFcfa(price)}');
+    }
+    sb.writeln('');
+    sb.writeln('TOTAL: ${formatFcfa(amount)}');
+    for (final p in payments) {
+      sb.writeln(
+          '${paymentMethodLabel(p['method'] as String? ?? '')}: ${formatFcfa(p['amount'] as int? ?? 0)}');
+    }
+
+    Share.share(sb.toString(), subject: 'Reçu $number');
+  }
+
+  String _fmtDate(String iso) {
+    try {
+      final dt = DateTime.parse(iso).toLocal();
+      return DateFormat('dd/MM/yyyy HH:mm').format(dt);
     } catch (_) {
       return '';
     }
