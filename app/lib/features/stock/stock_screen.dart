@@ -13,27 +13,6 @@ final _stockProvider = FutureProvider.autoDispose<List<dynamic>>((ref) async {
 
 final _apiProv = Provider<ApiClient>((ref) => ApiClient());
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-
-/// Returns a list of "X UnitName" strings for every non-base unit
-/// whose whole-unit count is ≥ 1 or whose remainder matters.
-List<String> _unitBreakdown(int qtyBase, List<Map> units) {
-  final nonBase = units.where((u) => u['isBase'] != true && (u['factor'] as int? ?? 0) > 1).toList();
-  final out = <String>[];
-  for (final u in nonBase) {
-    final factor = u['factor'] as int? ?? 1;
-    final whole = qtyBase ~/ factor;
-    final rem = qtyBase % factor;
-    final name = u['name'] as String? ?? '';
-    if (whole > 0 && rem == 0) {
-      out.add('$whole $name');
-    } else if (whole > 0) {
-      out.add('$whole $name + $rem');
-    }
-    // if whole == 0, skip
-  }
-  return out;
-}
 
 class StockScreen extends ConsumerWidget {
   const StockScreen({super.key});
