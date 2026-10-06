@@ -54,6 +54,9 @@ class ProductsScreen extends ConsumerWidget {
             ),
           ],
           bottom: const TabBar(
+            indicatorColor: Colors.white,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
             tabs: [
               Tab(icon: Icon(Icons.list_alt), text: 'Articles'),
               Tab(icon: Icon(Icons.price_check), text: 'Catalogue prix'),
