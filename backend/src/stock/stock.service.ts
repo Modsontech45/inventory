@@ -11,7 +11,7 @@ export class StockService {
     const products = await this.prisma.product.findMany({
       where: { businessId, archived: false, deleted: false },
       include: {
-        units: { where: { deleted: false, isBase: true } },
+        units: { where: { deleted: false }, orderBy: [{ isBase: 'desc' }, { name: 'asc' }] },
         category: { select: { name: true } },
         stockLevels: depotId
           ? { where: { depotId }, include: { depot: { select: { id: true, name: true } } } }
