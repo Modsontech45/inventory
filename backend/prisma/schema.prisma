@@ -439,12 +439,12 @@ model Customer {
 model CustomerPayment {
   id          String        @id @db.Uuid
   businessId  String        @db.Uuid
-  depotId     String        @db.Uuid
+  depotId     String?       @db.Uuid
   customerId  String        @db.Uuid
   customer    Customer      @relation(fields: [customerId], references: [id])
   userId      String        @db.Uuid
   user        User          @relation(fields: [userId], references: [id])
-  deviceId    String        @db.Uuid
+  deviceId    String?       @db.Uuid
   amount      Int
   method      PaymentMethod @default(CASH)
   reference   String?

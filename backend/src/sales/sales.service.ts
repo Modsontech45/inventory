@@ -94,8 +94,25 @@ export class SalesService {
     return sale;
   }
 
-  async findAll(businessId: string, depotId: string, query: { from?: string; to?: string; customerId?: string; page?: number }) {
-    const where: any = { businessId, depotId, deleted: false, status: SaleStatus.ACTIVE };
+  async findAll(businessId: string, depotId: string, query: { from?: string; to?: string; period?: string; customerId?: string; page?: number }) {
+    const where: any = { businessId, deleted: false, status: SaleStatus.ACTIVE };
+    if (depotId) where.depotId = depotId;
+
+    // period shorthand: today | week | month
+    if (query.period && !query.from) {
+      const now = new Date();
+      if (query.period === 'today') {
+        const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        where.createdAt = { gte: start };
+      } else if (query.period === 'week') {
+        const start = new Date(now); start.setDate(now.getDate() - 7);
+        where.createdAt = { gte: start };
+      } else if (query.period === 'month') {
+        const start = new Date(now.getFullYear(), now.getMonth(), 1);
+        where.createdAt = { gte: start };
+      }
+    }
+
     if (query.from) where.createdAt = { ...where.createdAt, gte: new Date(query.from) };
     if (query.to) where.createdAt = { ...where.createdAt, lte: new Date(query.to) };
     if (query.customerId) where.customerId = query.customerId;

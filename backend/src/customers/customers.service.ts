@@ -7,10 +7,17 @@ export class CustomersService {
   constructor(private prisma: PrismaService) {}
 
   async findAll(businessId: string) {
-    return this.prisma.customer.findMany({
+    const customers = await this.prisma.customer.findMany({
       where: { businessId, deleted: false },
       orderBy: { name: 'asc' },
     });
+
+    return Promise.all(
+      customers.map(async (c) => ({
+        ...c,
+        totalDebt: await this.getCustomerBalance(c.id, businessId),
+      })),
+    );
   }
 
   async findOne(id: string, businessId: string) {
@@ -29,7 +36,17 @@ export class CustomersService {
     if (!customer) throw new NotFoundException('Client introuvable');
 
     const balance = await this.getCustomerBalance(id, businessId);
-    return { ...customer, balance };
+
+    // Merge sales and debt payments into a single sorted transaction list
+    const saleTxs = (customer.sales as any[]).map((s) => ({ ...s, type: 'SALE', amount: s.totalAmount }));
+    const paymentTxs = (customer.payments as any[]).map((p) => ({ ...p, type: 'PAYMENT', totalAmount: p.amount }));
+    const recentTransactions = [...saleTxs, ...paymentTxs]
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 50);
+
+    const totalPurchased = (customer.sales as any[]).reduce((s: number, sale: any) => s + (sale.totalAmount ?? 0), 0);
+
+    return { ...customer, balance, totalDebt: balance, totalPurchased, recentTransactions };
   }
 
   async create(data: any, businessId: string, userId: string, deviceId: string) {
@@ -59,15 +76,22 @@ export class CustomersService {
     });
   }
 
-  async recordPayment(customerId: string, amount: number, method: PaymentMethod, reference: string | undefined, businessId: string, depotId: string, userId: string, deviceId: string) {
+  async recordPayment(customerId: string, amount: number, method: PaymentMethod, reference: string | undefined, businessId: string, depotId: string | undefined, userId: string, deviceId: string | undefined) {
     const customer = await this.prisma.customer.findFirst({ where: { id: customerId, businessId, deleted: false } });
     if (!customer) throw new NotFoundException('Client introuvable');
+
+    // Use provided depotId or fall back to the business's first depot
+    let resolvedDepotId = depotId;
+    if (!resolvedDepotId) {
+      const depot = await this.prisma.depot.findFirst({ where: { businessId } });
+      resolvedDepotId = depot?.id;
+    }
 
     return this.prisma.customerPayment.create({
       data: {
         id: crypto.randomUUID(),
         businessId,
-        depotId,
+        depotId: resolvedDepotId,
         customerId,
         userId,
         deviceId,

@@ -35,7 +35,7 @@ export class CustomersController {
   }
 
   @Post(':id/payments')
-  recordPayment(@Param('id') id: string, @Body() body: { amount: number; method: PaymentMethod; reference?: string; depotId: string }, @CurrentUser() user: any) {
+  recordPayment(@Param('id') id: string, @Body() body: { amount: number; method: PaymentMethod; reference?: string; depotId?: string }, @CurrentUser() user: any) {
     return this.service.recordPayment(id, body.amount, body.method, body.reference, user.businessId, body.depotId, user.userId, user.deviceId);
   }
 }
