@@ -284,8 +284,6 @@ class _UnitFormEntry {
   final TextEditingController factorCtrl;
   final TextEditingController purchaseCtrl;
   final TextEditingController retailCtrl;
-  final TextEditingController wholesaleCtrl;
-  final TextEditingController minQtyCtrl;
 
   _UnitFormEntry({
     this.id,
@@ -294,20 +292,14 @@ class _UnitFormEntry {
     String factor = '1',
     String purchase = '',
     String retail = '',
-    String wholesale = '',
-    String minQty = '10',
   })  : factorCtrl = TextEditingController(text: factor),
         purchaseCtrl = TextEditingController(text: purchase),
-        retailCtrl = TextEditingController(text: retail),
-        wholesaleCtrl = TextEditingController(text: wholesale),
-        minQtyCtrl = TextEditingController(text: minQty);
+        retailCtrl = TextEditingController(text: retail);
 
   void dispose() {
     factorCtrl.dispose();
     purchaseCtrl.dispose();
     retailCtrl.dispose();
-    wholesaleCtrl.dispose();
-    minQtyCtrl.dispose();
   }
 }
 
@@ -379,8 +371,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
           factor: (u['factor'] as int? ?? 1).toString(),
           purchase: (u['purchasePrice'] as int? ?? 0).toString(),
           retail: (u['retailPrice'] as int? ?? 0).toString(),
-          wholesale: (u['wholesalePrice'] as int? ?? 0).toString(),
-          minQty: (u['wholesaleMinQty'] as int? ?? 10).toString(),
         ));
       }
     }
@@ -482,6 +472,15 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
     setState(() => _unitEntries.add(_UnitFormEntry(isBase: false)));
   }
 
+  void _addUnitWithName(String name) {
+    setState(() {
+      if (!_localUnits.any((u) => u['name'] == name)) {
+        _localUnits = [..._localUnits, {'id': name, 'name': name}];
+      }
+      _unitEntries.add(_UnitFormEntry(isBase: false, name: name));
+    });
+  }
+
   void _removeUnit(int idx) {
     if (_unitEntries.length <= 1) return;
     setState(() {
@@ -517,11 +516,8 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
                 'factor': int.tryParse(u.factorCtrl.text) ?? 1,
                 'purchasePrice': int.tryParse(u.purchaseCtrl.text) ?? 0,
                 'retailPrice': int.tryParse(u.retailCtrl.text) ?? 0,
-                'wholesalePrice': int.tryParse(u.wholesaleCtrl.text.isEmpty
-                        ? u.retailCtrl.text
-                        : u.wholesaleCtrl.text) ??
-                    0,
-                'wholesaleMinQty': int.tryParse(u.minQtyCtrl.text) ?? 10,
+                'wholesalePrice': int.tryParse(u.retailCtrl.text) ?? 0,
+                'wholesaleMinQty': 1,
               })
           .toList();
 
@@ -716,32 +712,6 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               ),
             ),
           ]),
-          const SizedBox(height: 8),
-
-          // Prices: gros + qté min gros
-          Row(children: [
-            Expanded(
-              child: TextFormField(
-                controller: u.wholesaleCtrl,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                    labelText: 'Prix gros',
-                    suffixText: 'F',
-                    isDense: true),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: TextFormField(
-                controller: u.minQtyCtrl,
-                keyboardType: TextInputType.number,
-                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                decoration: const InputDecoration(
-                    labelText: 'Qté min gros', isDense: true),
-              ),
-            ),
-          ]),
         ],
       ),
     );
@@ -865,12 +835,44 @@ class _ProductFormSheetState extends State<_ProductFormSheet> {
               for (int i = 0; i < _unitEntries.length; i++)
                 _buildUnitCard(i),
 
-              // Add unit button
-              TextButton.icon(
-                onPressed: _addUnit,
-                icon: const Icon(Icons.add, size: 18),
-                label: const Text('Ajouter une unité de vente'),
-                style: TextButton.styleFrom(foregroundColor: kPrimary),
+              // Quick-add bulk unit chips
+              const SizedBox(height: 4),
+              Wrap(
+                spacing: 8,
+                runSpacing: 4,
+                children: [
+                  for (final name in [
+                    'Tonne',
+                    'Douzaine',
+                    'Lot de 10',
+                    'Lot de 25',
+                    'Sac 50kg',
+                    'Paquet',
+                  ])
+                    ActionChip(
+                      label: Text('+ $name'),
+                      onPressed: () => _addUnitWithName(name),
+                      backgroundColor: kPrimary.withValues(alpha: 0.08),
+                      labelStyle: const TextStyle(
+                          color: kPrimary,
+                          fontWeight: FontWeight.w600,
+                          fontSize: 12),
+                      padding: EdgeInsets.zero,
+                      materialTapTargetSize:
+                          MaterialTapTargetSize.shrinkWrap,
+                    ),
+                  ActionChip(
+                    label: const Text('+ Autre…'),
+                    onPressed: _addUnit,
+                    backgroundColor: Colors.grey.shade100,
+                    labelStyle: const TextStyle(
+                        color: kTextSecondary,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 12),
+                    padding: EdgeInsets.zero,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ],
               ),
 
               if (_error != null) ...[
