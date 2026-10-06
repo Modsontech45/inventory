@@ -174,7 +174,8 @@ class _StockCard extends StatelessWidget {
     final units = (prod['units'] as List?)?.cast<Map>() ?? [];
     final base = units.where((u) => u['isBase'] == true).firstOrNull ??
         (units.isNotEmpty ? units.first : null);
-    final bulk = units.where((u) => u['isBase'] != true).toList();
+    final bulk =
+        units.where((u) => u['isBase'] != true && (u['factor'] as int? ?? 0) > 1).toList();
 
     final qty = item['cachedQty'] as int? ?? 0;
     final isLow = item['isLowStock'] as bool? ?? false;
@@ -183,42 +184,23 @@ class _StockCard extends StatelessWidget {
 
     Color statusColor = kSuccess;
     String statusLabel = 'En stock';
-    IconData statusIcon = Icons.check_circle_outline;
     if (isNeg || isOut) {
       statusColor = kDanger;
       statusLabel = 'Rupture';
-      statusIcon = Icons.cancel_outlined;
     } else if (isLow) {
       statusColor = kWarning;
       statusLabel = 'Stock faible';
-      statusIcon = Icons.warning_amber_outlined;
     }
 
     final baseName = base?['name'] as String? ?? 'u';
     final retailPrice = base?['retailPrice'] as int? ?? 0;
     final purchasePrice = base?['purchasePrice'] as int? ?? 0;
-    final costValue = qty * purchasePrice;
-
-    // Build bulk equivalents
-    final equivalents = <Map<String, String>>[];
-    for (final u in bulk) {
-      final factor = u['factor'] as int? ?? 1;
-      if (factor < 2) continue;
-      final whole = qty ~/ factor;
-      final rem = qty % factor;
-      final name = u['name'] as String? ?? '';
-      final uRetail = u['retailPrice'] as int? ?? 0;
-      equivalents.add({
-        'label': rem == 0 ? '$whole $name' : '$whole $name + $rem',
-        'price': uRetail > 0 ? formatFcfa(uRetail) : '',
-        'factor': '$factor $baseName = 1 $name',
-      });
-    }
+    final costValue = qty > 0 ? qty * purchasePrice : 0;
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
-      elevation: 2,
-      shadowColor: Colors.black12,
+      margin: const EdgeInsets.only(bottom: 12),
+      elevation: 3,
+      shadowColor: Colors.black.withValues(alpha: 0.08),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
       clipBehavior: Clip.hardEdge,
       child: InkWell(
@@ -227,181 +209,276 @@ class _StockCard extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // Status bar (left edge)
-              Container(width: 6, color: statusColor),
+              // ── Status bar (left edge) ──────────────────────────────────
+              Container(width: 7, color: statusColor),
 
-              // Main content
               Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      // ── Header ──────────────────────────────────────────
-                      Row(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+
+                    // ── 1. Header (name + status) ───────────────────────
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(14, 12, 12, 4),
+                      child: Row(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            child: Text(
-                              prod['name'] as String? ?? '',
-                              style: const TextStyle(
-                                  fontSize: 16, fontWeight: FontWeight.w800),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                                horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(
-                              color: statusColor.withValues(alpha: 0.12),
-                              borderRadius: BorderRadius.circular(20),
-                            ),
-                            child: Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Icon(statusIcon,
-                                    size: 12, color: statusColor),
-                                const SizedBox(width: 4),
-                                Text(statusLabel,
-                                    style: TextStyle(
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: statusColor)),
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      // Category / brand
-                      if (cat['name'] != null || prod['brand'] != null)
-                        Padding(
-                          padding: const EdgeInsets.only(top: 2, bottom: 8),
-                          child: Text(
-                            [
-                              if (cat['name'] != null) cat['name'] as String,
-                              if (prod['brand'] != null) prod['brand'] as String,
-                            ].join(' · '),
-                            style: const TextStyle(
-                                fontSize: 12, color: kTextSecondary),
-                          ),
-                        )
-                      else
-                        const SizedBox(height: 8),
-
-                      // ── Quantity block ───────────────────────────────────
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.end,
-                        children: [
-                          // Base qty (prominent)
-                          Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                '$qty',
-                                style: TextStyle(
-                                  fontSize: 40,
-                                  fontWeight: FontWeight.w900,
-                                  color: statusColor,
-                                  height: 1,
-                                ),
-                              ),
-                              Text(
-                                baseName,
-                                style: const TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.w600,
-                                    color: kTextSecondary),
-                              ),
-                            ],
-                          ),
-
-                          // Equivalents (bulk units)
-                          if (equivalents.isNotEmpty) ...[
-                            const SizedBox(width: 16),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: equivalents
-                                    .map((e) => Padding(
-                                          padding:
-                                              const EdgeInsets.only(bottom: 4),
-                                          child: Row(children: [
-                                            const Icon(
-                                                Icons.subdirectory_arrow_right,
-                                                size: 14,
-                                                color: kTextSecondary),
-                                            const SizedBox(width: 4),
-                                            Expanded(
-                                              child: Text(
-                                                e['label']!,
-                                                style: const TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.w700,
-                                                ),
-                                              ),
-                                            ),
-                                            if (e['price']!.isNotEmpty)
-                                              Text(
-                                                e['price']!,
-                                                style: const TextStyle(
-                                                    fontSize: 12,
-                                                    color: kTextSecondary),
-                                              ),
-                                          ]),
-                                        ))
-                                    .toList(),
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-
-                      const SizedBox(height: 10),
-                      const Divider(height: 1),
-                      const SizedBox(height: 8),
-
-                      // ── Footer : prices + adjust hint ────────────────────
-                      Row(
                         children: [
                           Expanded(
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                if (retailPrice > 0)
-                                  Text(
-                                    '${formatFcfa(retailPrice)} / $baseName',
-                                    style: const TextStyle(
-                                        fontSize: 13,
-                                        fontWeight: FontWeight.w700,
-                                        color: kPrimary),
-                                  ),
-                                if (costValue > 0)
-                                  Text(
-                                    'Valeur : ${formatFcfa(costValue)}',
-                                    style: const TextStyle(
-                                        fontSize: 11, color: kTextSecondary),
+                                Text(
+                                  prod['name'] as String? ?? '',
+                                  style: const TextStyle(
+                                      fontSize: 17,
+                                      fontWeight: FontWeight.w900,
+                                      height: 1.1),
+                                ),
+                                if (cat['name'] != null || prod['brand'] != null)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 3),
+                                    child: Text(
+                                      [
+                                        if (cat['name'] != null)
+                                          cat['name'] as String,
+                                        if (prod['brand'] != null)
+                                          prod['brand'] as String,
+                                      ].join(' · '),
+                                      style: const TextStyle(
+                                          fontSize: 12,
+                                          color: kTextSecondary),
+                                    ),
                                   ),
                               ],
                             ),
                           ),
-                          // Adjust button
-                          TextButton.icon(
-                            onPressed: onTap,
-                            icon: const Icon(Icons.tune, size: 16),
-                            label: const Text('Ajuster'),
-                            style: TextButton.styleFrom(
-                              foregroundColor: kPrimary,
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 6),
-                              textStyle: const TextStyle(
-                                  fontSize: 13, fontWeight: FontWeight.w700),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: statusColor,
+                              borderRadius: BorderRadius.circular(20),
+                            ),
+                            child: Text(
+                              statusLabel,
+                              style: const TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: Colors.white),
                             ),
                           ),
                         ],
                       ),
+                    ),
+
+                    const Divider(height: 1, indent: 14),
+
+                    // ── 2. Key figures: stock qty | unit price ──────────
+                    IntrinsicHeight(
+                      child: Row(
+                        children: [
+                          // Stock qty
+                          Expanded(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(14, 12, 8, 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'EN STOCK',
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: statusColor,
+                                        letterSpacing: 0.8),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    '$qty',
+                                    style: TextStyle(
+                                        fontSize: 36,
+                                        fontWeight: FontWeight.w900,
+                                        color: statusColor,
+                                        height: 1),
+                                  ),
+                                  Text(
+                                    baseName,
+                                    style: const TextStyle(
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w700,
+                                        color: kTextSecondary),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+
+                          // Vertical divider
+                          Container(
+                              width: 1,
+                              color: Colors.grey.shade200),
+
+                          // Unit price
+                          Expanded(
+                            child: Padding(
+                              padding:
+                                  const EdgeInsets.fromLTRB(14, 12, 12, 12),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'PRIX / $baseName'.toUpperCase(),
+                                    style: const TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w700,
+                                        color: kPrimary,
+                                        letterSpacing: 0.8),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    formatFcfa(retailPrice),
+                                    style: const TextStyle(
+                                        fontSize: 26,
+                                        fontWeight: FontWeight.w900,
+                                        color: kPrimary,
+                                        height: 1),
+                                  ),
+                                  Text(
+                                    '1 $baseName',
+                                    style: const TextStyle(
+                                        fontSize: 13,
+                                        color: kTextSecondary),
+                                  ),
+                                  if (costValue > 0)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 6),
+                                      child: Text(
+                                        'Valeur : ${formatFcfa(costValue)}',
+                                        style: const TextStyle(
+                                            fontSize: 11,
+                                            color: kTextSecondary),
+                                      ),
+                                    ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // ── 3. Bulk conditionings ───────────────────────────
+                    if (bulk.isNotEmpty) ...[
+                      const Divider(height: 1, indent: 14),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 10, 12, 10),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              'VENTE EN GROS',
+                              style: TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w700,
+                                  color: kTextSecondary,
+                                  letterSpacing: 0.8),
+                            ),
+                            const SizedBox(height: 8),
+                            ...bulk.map((u) {
+                              final factor = u['factor'] as int? ?? 1;
+                              final name = u['name'] as String? ?? '';
+                              final uRetail = u['retailPrice'] as int? ?? 0;
+                              final whole = qty ~/ factor;
+                              final rem = qty % factor;
+                              final stockStr = whole > 0
+                                  ? (rem == 0
+                                      ? '$whole $name en stock'
+                                      : '$whole $name + $rem $baseName en stock')
+                                  : '< 1 $name en stock';
+
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: 8),
+                                child: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    // Conditioning name + conversion
+                                    Expanded(
+                                      child: Column(
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.start,
+                                        children: [
+                                          Text(
+                                            name,
+                                            style: const TextStyle(
+                                                fontSize: 15,
+                                                fontWeight: FontWeight.w800),
+                                          ),
+                                          Text(
+                                            '1 $name = $factor $baseName   ·   $stockStr',
+                                            style: const TextStyle(
+                                                fontSize: 11,
+                                                color: kTextSecondary),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                    // Bulk price (prominent)
+                                    Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.end,
+                                      children: [
+                                        Text(
+                                          formatFcfa(uRetail),
+                                          style: const TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.w900,
+                                              color: kSuccess),
+                                        ),
+                                        Text(
+                                          '/ $name',
+                                          style: const TextStyle(
+                                              fontSize: 11,
+                                              color: kTextSecondary),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }),
+                          ],
+                        ),
+                      ),
                     ],
-                  ),
+
+                    // ── 4. Adjust button ────────────────────────────────
+                    const Divider(height: 1),
+                    InkWell(
+                      onTap: onTap,
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 16, vertical: 10),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.tune, size: 16, color: kPrimary),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Ajuster le stock',
+                              style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w700,
+                                  color: kPrimary),
+                            ),
+                            const SizedBox(width: 4),
+                            Icon(Icons.chevron_right,
+                                size: 18, color: kPrimary),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
             ],
