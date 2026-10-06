@@ -108,8 +108,13 @@ class _StockList extends ConsumerStatefulWidget {
   ConsumerState<_StockList> createState() => _StockListState();
 }
 
+// Status filter values
+enum _StockFilter { all, inStock, low, out }
+
 class _StockListState extends ConsumerState<_StockList> {
   String _query = '';
+  String? _selectedCatId;       // null = all categories
+  _StockFilter _statusFilter = _StockFilter.all;
 
   void _openAdjust(BuildContext ctx, Map<String, dynamic> item) async {
     final updated = await showModalBottomSheet<bool>(
@@ -121,41 +126,293 @@ class _StockListState extends ConsumerState<_StockList> {
     if (updated == true) ref.invalidate(_stockProvider);
   }
 
+  // Extract unique categories from items list
+  List<Map<String, dynamic>> _categories() {
+    final seen = <String>{};
+    final cats = <Map<String, dynamic>>[];
+    for (final item in widget.items) {
+      final cat = (item['product'] as Map?)?['category'] as Map?;
+      final id = cat?['id'] as String?;
+      if (id != null && seen.add(id)) {
+        cats.add({'id': id, 'name': cat!['name'] as String? ?? ''});
+      }
+    }
+    cats.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
+    return cats;
+  }
+
+  bool _matchesStatus(Map<String, dynamic> item) {
+    if (_statusFilter == _StockFilter.all) return true;
+    final qty = item['cachedQty'] as int? ?? 0;
+    final isLow = item['isLowStock'] as bool? ?? false;
+    final isOut = item['isOutOfStock'] as bool? ?? false;
+    return switch (_statusFilter) {
+      _StockFilter.inStock => !isLow && !isOut && qty > 0,
+      _StockFilter.low     => isLow && !isOut,
+      _StockFilter.out     => isOut || qty <= 0,
+      _StockFilter.all     => true,
+    };
+  }
+
   @override
   Widget build(BuildContext context) {
-    final filtered = _query.isEmpty
-        ? widget.items
-        : widget.items.where((i) {
-            final prod = i['product'] as Map? ?? {};
-            final name = (prod['name'] as String? ?? '').toLowerCase();
-            final brand = (prod['brand'] as String? ?? '').toLowerCase();
-            return name.contains(_query.toLowerCase()) ||
-                brand.contains(_query.toLowerCase());
-          }).toList();
+    final categories = _categories();
+    final q = _query.toLowerCase();
+
+    final displayed = widget.items.where((i) {
+      final prod = i['product'] as Map? ?? {};
+      // search
+      final name = (prod['name'] as String? ?? '').toLowerCase();
+      final brand = (prod['brand'] as String? ?? '').toLowerCase();
+      final catName = ((prod['category'] as Map?)?['name'] as String? ?? '').toLowerCase();
+      if (q.isNotEmpty && !name.contains(q) && !brand.contains(q) && !catName.contains(q)) {
+        return false;
+      }
+      // category filter
+      if (_selectedCatId != null &&
+          (prod['category'] as Map?)?['id'] != _selectedCatId) {
+        return false;
+      }
+      // status filter
+      return _matchesStatus(i);
+    }).toList();
+
+    // Count per status for badges
+    int cntLow = 0, cntOut = 0;
+    for (final i in widget.items) {
+      if (i['isOutOfStock'] as bool? ?? false) cntOut++;
+      else if (i['isLowStock'] as bool? ?? false) cntLow++;
+    }
 
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // ── Search bar ────────────────────────────────────────────────────
         Padding(
-          padding: const EdgeInsets.fromLTRB(12, 12, 12, 6),
+          padding: const EdgeInsets.fromLTRB(12, 10, 12, 6),
           child: TextField(
-            decoration: const InputDecoration(
-              prefixIcon: Icon(Icons.search),
-              hintText: 'Rechercher…',
+            decoration: InputDecoration(
+              prefixIcon: const Icon(Icons.search),
+              hintText: 'Nom, catégorie, marque…',
+              suffixIcon: _query.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.close, size: 18),
+                      onPressed: () => setState(() => _query = ''),
+                    )
+                  : null,
             ),
             onChanged: (v) => setState(() => _query = v),
           ),
         ),
+
+        // ── Status filter chips ───────────────────────────────────────────
+        SizedBox(
+          height: 42,
+          child: ListView(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            scrollDirection: Axis.horizontal,
+            children: [
+              _FilterChip(
+                label: 'Tout',
+                count: widget.items.length,
+                selected: _statusFilter == _StockFilter.all,
+                color: kPrimary,
+                onTap: () => setState(() => _statusFilter = _StockFilter.all),
+              ),
+              _FilterChip(
+                label: 'En stock',
+                count: widget.items
+                    .where((i) =>
+                        !(i['isLowStock'] as bool? ?? false) &&
+                        !(i['isOutOfStock'] as bool? ?? false) &&
+                        (i['cachedQty'] as int? ?? 0) > 0)
+                    .length,
+                selected: _statusFilter == _StockFilter.inStock,
+                color: kSuccess,
+                onTap: () => setState(() => _statusFilter = _StockFilter.inStock),
+              ),
+              if (cntLow > 0)
+                _FilterChip(
+                  label: 'Stock faible',
+                  count: cntLow,
+                  selected: _statusFilter == _StockFilter.low,
+                  color: kWarning,
+                  onTap: () => setState(() => _statusFilter = _StockFilter.low),
+                ),
+              if (cntOut > 0)
+                _FilterChip(
+                  label: 'Rupture',
+                  count: cntOut,
+                  selected: _statusFilter == _StockFilter.out,
+                  color: kDanger,
+                  onTap: () => setState(() => _statusFilter = _StockFilter.out),
+                ),
+            ],
+          ),
+        ),
+
+        // ── Category filter chips ─────────────────────────────────────────
+        if (categories.isNotEmpty)
+          SizedBox(
+            height: 42,
+            child: ListView(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              scrollDirection: Axis.horizontal,
+              children: [
+                _CatChip(
+                  label: 'Toutes catégories',
+                  selected: _selectedCatId == null,
+                  onTap: () => setState(() => _selectedCatId = null),
+                ),
+                ...categories.map((c) => _CatChip(
+                      label: c['name'] as String,
+                      selected: _selectedCatId == c['id'],
+                      onTap: () =>
+                          setState(() => _selectedCatId = c['id'] as String),
+                    )),
+              ],
+            ),
+          ),
+
+        const Divider(height: 1),
+
+        // ── Results count ─────────────────────────────────────────────────
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 6, 16, 2),
+          child: Text(
+            '${displayed.length} article${displayed.length != 1 ? 's' : ''}',
+            style: const TextStyle(fontSize: 12, color: kTextSecondary),
+          ),
+        ),
+
+        // ── List ──────────────────────────────────────────────────────────
         Expanded(
-          child: ListView.builder(
-            padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
-            itemCount: filtered.length,
-            itemBuilder: (_, i) => _StockCard(
-              item: filtered[i],
-              onTap: () => _openAdjust(context, filtered[i]),
+          child: displayed.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(Icons.search_off,
+                          size: 48, color: kTextSecondary),
+                      const SizedBox(height: 8),
+                      Text(
+                        _query.isNotEmpty
+                            ? 'Aucun résultat pour "$_query"'
+                            : 'Aucun article dans ce filtre',
+                        style: const TextStyle(color: kTextSecondary),
+                        textAlign: TextAlign.center,
+                      ),
+                    ],
+                  ),
+                )
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(12, 4, 12, 80),
+                  itemCount: displayed.length,
+                  itemBuilder: (_, i) => _StockCard(
+                    item: displayed[i],
+                    onTap: () => _openAdjust(context, displayed[i]),
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+// ── Filter chip widgets ───────────────────────────────────────────────────────
+
+class _FilterChip extends StatelessWidget {
+  final String label;
+  final int count;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+  const _FilterChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8, top: 6, bottom: 6),
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected ? color : Colors.white,
+            border: Border.all(color: selected ? color : Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Row(mainAxisSize: MainAxisSize.min, children: [
+            Text(
+              label,
+              style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: selected ? Colors.white : color),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                color: selected
+                    ? Colors.white.withValues(alpha: 0.3)
+                    : color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Text(
+                '$count',
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: selected ? Colors.white : color),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+class _CatChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _CatChip(
+      {required this.label, required this.selected, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 8, top: 6, bottom: 6),
+      child: GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 140),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
+          decoration: BoxDecoration(
+            color: selected ? kPrimary : Colors.white,
+            border: Border.all(
+                color: selected ? kPrimary : Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(20),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: selected ? Colors.white : kTextSecondary,
             ),
           ),
         ),
-      ],
+      ),
     );
   }
 }
